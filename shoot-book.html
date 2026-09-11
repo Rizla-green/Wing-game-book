@@ -41,9 +41,14 @@
         Set GUNS_LOGIN_EMAIL / BEATERS_LOGIN_EMAIL to the two shared
         accounts you created.
 
-     GEMINI (optional — photo pre-fill on Add Sheet)
-     https://aistudio.google.com/app/apikey — free key, paste below.
-     Leave blank to hide the photo-upload button.
+     PHOTO PRE-FILL (optional — reads a photo of the paper sheet)
+     Uses OpenRouter's free tier (openrouter.ai) — genuinely free,
+     no credit card needed at all. Sign up at openrouter.ai/keys,
+     create a key, paste it below. Leave blank to hide the
+     photo-upload button. (We originally used Google's Gemini API
+     for this, but Google's new key system was rejecting valid
+     requests as of Sept 2026 — OpenRouter's free tier avoids that
+     problem entirely.)
 
      WEATHER (automatic, via Open-Meteo — free, no key needed)
      Set SHOOT_LAT / SHOOT_LON to your shoot's location.
@@ -52,7 +57,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
-  const GEMINI_API_KEY = "AQ.Ab8RN6InRzITLxUXhD8c9SvjvC-Li1K6oDCKqAbc4jg5VIDz4A"; // paste your free Google AI Studio key here
+  const OPENROUTER_API_KEY = "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"; // paste your free openrouter.ai key here
   const SHOOT_LAT = 51.8974;   // The Old Gym, Cublington Road, Leighton Buzzard LU7 0LB
   const SHOOT_LON = -0.7499;
   const GUNS_LOGIN_EMAIL = "guns@wingshoot.com";       // the shared Guns account you created
@@ -827,7 +832,7 @@ function renderAddForm(app){
     <div class="card">
       <h2>${editing ? 'Edit sheet' : 'Add a new sheet'}</h2>
       <p class="hint">Fill this in from the paper wing shoot sheet.</p>
-      ${GEMINI_API_KEY ? `
+      ${OPENROUTER_API_KEY ? `
       <div class="section-title">Photo pre-fill</div>
       <p class="hint">Upload a photo — fields below get pre-filled, check against the paper before saving.</p>
       <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">
@@ -937,13 +942,23 @@ function handlePhotoUpload(evt){
     const prompt = `You are reading a handwritten "wing shoot" sheet. It has two people tables: "GUNS" and "BEATERS" (name, sweep number). It has a "GAME SHOT NO" table listing species and counts, from this list: ${speciesNames.join(', ')}. It shows TOTAL SHOT and CARTRIDGES figures. Return ONLY valid JSON, no markdown:
 {"guns":[{"name":"","sweep":0}],"beaters":[{"name":"","sweep":0}],"game":{"Pheasant":0},"totalShot":0,"cartridges":0}
 Only include species with a number written next to them. Omit illegible fields rather than guessing.`;
-    fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({contents:[{parts:[{text:prompt},{inline_data:{mime_type:'image/jpeg',data:base64}}]}]})
+    fetch(`https://openrouter.ai/api/v1/chat/completions`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${OPENROUTER_API_KEY}`},
+      body: JSON.stringify({
+        model: 'openrouter/free', // auto-picks a free vision-capable model
+        messages: [{
+          role: 'user',
+          content: [
+            {type:'text', text: prompt},
+            {type:'image_url', image_url:{url: `data:image/jpeg;base64,${base64}`}}
+          ]
+        }]
+      })
     }).then(r=>r.json()).then(data=>{
-      if (data.error){ throw new Error(`API error ${data.error.code}: ${data.error.message}`); }
-      if (!data.candidates || !data.candidates.length){ throw new Error('No candidates returned' + (data.promptFeedback ? ' — ' + JSON.stringify(data.promptFeedback) : '')); }
-      const text = data.candidates[0].content.parts[0].text;
+      if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
+      if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
+      const text = data.choices[0].message.content;
       const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
       if ((parsed.guns||[]).length) formGuns = parsed.guns;
       if ((parsed.beaters||[]).length) formBeaters = parsed.beaters;
