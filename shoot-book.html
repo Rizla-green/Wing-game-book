@@ -225,7 +225,10 @@ function allSeasonKeys(){
 }
 
 /* ---------------- auth ---------------- */
-auth.onAuthStateChanged(user=>{
+let lastAuthUser = undefined; // undefined = not yet known
+function computeAuthRole(){
+  const user = lastAuthUser;
+  if (user === undefined) return; // auth hasn't reported yet, don't guess
   if (!user){ authRole = null; }
   else if (user.email === GUNS_LOGIN_EMAIL){ authRole = 'gun'; }
   else if (user.email === BEATERS_LOGIN_EMAIL){ authRole = 'beater'; }
@@ -236,6 +239,10 @@ auth.onAuthStateChanged(user=>{
   if (authRole && currentTab==='signin') currentTab='shootdays';
   if (!authRole) currentTab='signin';
   render();
+}
+auth.onAuthStateChanged(user=>{
+  lastAuthUser = user;
+  computeAuthRole();
 });
 function renderAuthBar(){
   const el = document.getElementById('authStatus');
@@ -279,14 +286,16 @@ db.collection('shootdays').orderBy('date','asc').onSnapshot(snap=>{
 db.collection('settings').doc('config').onSnapshot(doc=>{
   if (doc.exists) appSettings = { drivesEnabled:false, driveNames:[], speciesList:DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", ...doc.data() };
   document.getElementById('siteTitle').textContent = appSettings.siteTitle || "Wing Shoot Gamebook";
-  settingsLoaded = true; render();
+  settingsLoaded = true;
+  computeAuthRole(); // the admin list may have just changed, so re-check role
+  render();
 }, ()=>{ settingsLoaded = true; render(); });
 
 /* ---------------- render router ---------------- */
 let selectedSeason = null;
 function render(){
   const app = document.getElementById('app');
-  if (!sheetsLoaded || !settingsLoaded || !shootDaysLoaded){ app.innerHTML='<div class="loading">Loading the book…</div>'; return; }
+  if (!sheetsLoaded || !settingsLoaded || !shootDaysLoaded || lastAuthUser===undefined){ app.innerHTML='<div class="loading">Loading the book…</div>'; return; }
   if (!authRole) return renderSignIn(app);
   if (authRole==='admin_pending') return renderPending(app);
   if (currentTab==='shootdays') return renderShootDays(app);
