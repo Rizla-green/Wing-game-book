@@ -107,6 +107,26 @@ table tr:last-child td{ border-bottom:none; }
 table tr.total-row td{ font-weight:700; border-top:2px solid var(--line); border-bottom:none; }
 .two-col{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }
 @media (max-width:680px){ .two-col{ grid-template-columns:1fr; } }
+
+/* mobile fixes: stack grids, shrink header, scrollable tables */
+@media (max-width:520px){
+  header.top{ padding:14px 14px 12px; }
+  header.top h1{ font-size:21px; }
+  header.top .sub{ font-size:11px; }
+  nav.tabs{ margin-top:10px; gap:0; }
+  nav.tabs button{ padding:8px 9px; font-size:12.5px; }
+  main{ padding:12px; }
+  .card{ padding:14px 14px; }
+  .headline .num{ font-size:36px; }
+  .stat-grid{ grid-template-columns:1fr 1fr; gap:10px; }
+  .grid2, .grid3, .grid4{ grid-template-columns:1fr !important; gap:4px; }
+  .grid3 button.remove-x, .grid4 button.remove-x{ justify-self:end; margin-top:-4px; }
+  .season-row{ gap:6px; }
+  table{ display:block; overflow-x:auto; white-space:nowrap; }
+  table th, table td{ padding:6px 8px; font-size:13px; }
+  .formula-strip{ font-size:14px; padding:10px 12px; }
+  input[type=text], input[type=number], input[type=date], input[type=password], input[type=email], select{ font-size:16px; } /* prevents iOS auto-zoom on focus */
+}
 .sheet-list-item{ display:flex; justify-content:space-between; align-items:center; padding:13px 0; border-bottom:1px solid var(--paper-dim); cursor:pointer; }
 .sheet-list-item:last-child{ border-bottom:none; }
 .sheet-list-item:hover .sd{ color:var(--rust); }
@@ -791,12 +811,39 @@ function renderSettings(app){
       <div style="margin-top:14px;"><button class="btn" onclick="saveFormula()">Save formula for this season</button></div>
       <div class="msg ok" id="formulaMsg"></div>
     </div>
+
+    <div class="card" style="border-color:#a13a2c;">
+      <h2 style="color:#a13a2c;">Danger zone</h2>
+      <p class="hint">Permanently deletes data — this cannot be undone.</p>
+      <div class="section-title">Delete a single weekly sheet</div>
+      <p class="hint">Easiest done from that sheet's own page (open it under Weekly Sheets, then Delete) — every sheet has a delete button there.</p>
+      <div class="section-title">Delete a season's shoot dates</div>
+      <p class="hint">Clears every row from the Shoot Days &amp; Guest Schedule for one season (guns/beaters/weekly sheets aren't affected).</p>
+      <div class="field"><label>Season</label>
+        <select id="dangerSeasonSelect">${seasons.map(k=>`<option value="${k}">${seasonLabel(k)}</option>`).join('')}</select>
+      </div>
+      <button class="btn danger small" onclick="deleteSeasonShootDays()">Delete all shoot dates in this season</button>
+      <div class="msg err" id="dangerMsg"></div>
+    </div>
   `;
   renderAdminRows(); renderDriveNameRows(); renderSpeciesRows(); renderFormulaRows();
   document.getElementById('formulaSeasonSelect').addEventListener('change', e=>{
     formulaSeasonKey = Number(e.target.value);
     formulaDraft = JSON.parse(JSON.stringify(getSeasonFormula(formulaSeasonKey)));
     renderFormulaRows();
+  });
+}
+function deleteSeasonShootDays(){
+  const seasonKey = Number(document.getElementById('dangerSeasonSelect').value);
+  const toDelete = allShootDays.filter(d=>seasonKeyForDate(new Date(d.date))===seasonKey);
+  if (!toDelete.length){ document.getElementById('dangerMsg').textContent = 'No shoot dates in that season to delete.'; return; }
+  if (!confirm(`Delete all ${toDelete.length} shoot date(s) from season ${seasonLabel(seasonKey)}? This cannot be undone.`)) return;
+  Promise.all(toDelete.map(d=>db.collection('shootdays').doc(d.id).delete())).then(()=>{
+    document.getElementById('dangerMsg').className = 'msg ok';
+    document.getElementById('dangerMsg').textContent = `Deleted ${toDelete.length} shoot date(s).`;
+  }).catch(err=>{
+    document.getElementById('dangerMsg').className = 'msg err';
+    document.getElementById('dangerMsg').textContent = 'Something went wrong: ' + err.message;
   });
 }
 function saveOrKeyFromSettings(){
