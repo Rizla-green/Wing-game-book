@@ -57,7 +57,11 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
-  const OPENROUTER_API_KEY = "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"; // paste your free openrouter.ai key here
+  // OpenRouter key is NOT stored here — a key baked into this public file
+  // gets found and auto-revoked by security bots within minutes. Instead,
+  // it's entered once by the admin and saved privately in the browser
+  // (see getOpenRouterKey() below). Leave this as a placeholder.
+  const OPENROUTER_API_KEY_UNUSED = "";
   const SHOOT_LAT = 51.8974;   // The Old Gym, Cublington Road, Leighton Buzzard LU7 0LB
   const SHOOT_LON = -0.7499;
   const GUNS_LOGIN_EMAIL = "guns@wingshoot.com";       // the shared Guns account you created
@@ -204,6 +208,8 @@ const FORMULA_TERMS = [
   {key:"guestsCount", label:"No. of guests"}
 ];
 
+function getOpenRouterKey(){ return localStorage.getItem('openrouter_key') || ''; }
+function saveOpenRouterKey(val){ localStorage.setItem('openrouter_key', val.trim()); }
 let allSheets = [], allShootDays = [];
 let sheetsLoaded=false, settingsLoaded=false, shootDaysLoaded=false;
 let appSettings = { drivesEnabled:false, driveNames:[], speciesList: DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook" };
@@ -344,6 +350,13 @@ function renderShootDays(app){
       <select id="sdSeasonSelect">${seasons.map(k=>`<option value="${k}" ${k===selectedSeason?'selected':''}>${seasonLabel(k)}</option>`).join('')}</select>
       ${authRole==='admin' ? `<button class="btn small" onclick="addShootDayRow()">+ add shoot day</button>` : ''}
     </div>
+    ${authRole==='admin' ? `
+    <div class="card">
+      <h2>Photo pre-fill</h2>
+      <p class="hint">Upload a photo of the season's printed schedule sheet — rows get added automatically, check them against the photo before relying on them.</p>
+      <input type="file" accept="image/*" id="shootDaysPhotoInput" onchange="handleShootDaysPhotoUpload(event)">
+      <div class="msg" id="shootDaysPhotoMsg"></div>
+    </div>` : ''}
     <div class="card">
       <h2>Shoot Days &amp; Guest Schedule</h2>
       <p class="hint">${seasonLabel(selectedSeason)} season.</p>
@@ -373,6 +386,52 @@ function renderShootDays(app){
 function addShootDayRow(){
   const today = new Date();
   db.collection('shootdays').add({ date: today.toISOString().slice(0,10), guest1:'', guest2:'' });
+}
+function handleShootDaysPhotoUpload(evt){
+  const file = evt.target.files[0]; if(!file) return;
+  const msg = document.getElementById('shootDaysPhotoMsg');
+  const orKey = getOpenRouterKey();
+  if (!orKey){
+    msg.className='msg err';
+    msg.textContent = 'No photo-reading key set up yet — go to Settings to add your free OpenRouter key.';
+    evt.target.value = '';
+    return;
+  }
+  msg.className='msg'; msg.textContent='Reading the schedule…';
+
+  compressImage(file, 1600, 0.82).then(base64 => {
+    const prompt = `You are reading a printed "Shoot Days & Guest Schedule" sheet for a wing shoot season. It has a table with columns: Day (name of weekday), Date, Guest 1, Guest 2 / Note. Return ONLY valid JSON, no markdown, no commentary, in exactly this shape:
+{"rows":[{"date":"YYYY-MM-DD","guest1":"","guest2":""}]}
+Convert each date shown (which may be in DD.MM.YY format) into YYYY-MM-DD format. If a Guest 1 or Guest 2 cell is blank or shows a dash, leave it as an empty string. Include every row from the table.`;
+    fetch(`https://openrouter.ai/api/v1/chat/completions`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
+      body: JSON.stringify({
+        model: 'openrouter/free',
+        messages: [{
+          role: 'user',
+          content: [
+            {type:'text', text: prompt},
+            {type:'image_url', image_url:{url: `data:image/jpeg;base64,${base64}`}}
+          ]
+        }]
+      })
+    }).then(r=>r.json()).then(data=>{
+      if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
+      if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
+      const text = data.choices[0].message.content;
+      const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
+      const rows = parsed.rows || [];
+      if (!rows.length){ throw new Error('No rows found in that photo'); }
+      let added = 0;
+      const batchPromises = rows.filter(r=>r.date).map(r=>
+        db.collection('shootdays').add({ date: r.date, guest1: r.guest1||'', guest2: r.guest2||'' }).then(()=>{ added++; })
+      );
+      Promise.all(batchPromises).then(()=>{
+        msg.className='msg ok'; msg.textContent=`Added ${added} shoot day(s) — check every row against the photo below, dates and guest names can be edited any time.`;
+      });
+    }).catch(err=>{ msg.className='msg err'; msg.textContent="Couldn't read that photo: " + err.message; });
+  }).catch(err=>{ msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message; });
 }
 function updateShootDay(id, field, val){
   db.collection('shootdays').doc(id).update({[field]: val});
@@ -674,6 +733,14 @@ function renderSettings(app){
 
   app.innerHTML = `
     <div class="card">
+      <h2>Photo pre-fill (this device)</h2>
+      <p class="hint">A free key from openrouter.ai/keys, used to read photos of sheets and schedules. Saved privately on this device only — not stored in the app's code, so it never ends up on GitHub. You'll need to enter it again if you use a different phone or browser.</p>
+      <div class="field"><label>OpenRouter API key</label><input type="text" id="orKeyInput" value="${getOpenRouterKey()}" placeholder="sk-or-v1-..."></div>
+      <button class="btn small" onclick="saveOrKeyFromSettings()">Save</button>
+      <div class="msg ok" id="orKeyMsg"></div>
+    </div>
+
+    <div class="card">
       <h2>Site title</h2>
       <div class="field"><label>Shown at the top of every page</label><input type="text" id="siteTitleInput" value="${appSettings.siteTitle||'Wing Shoot Gamebook'}"></div>
       <button class="btn small" onclick="saveSiteTitle()">Save</button>
@@ -731,6 +798,11 @@ function renderSettings(app){
     formulaDraft = JSON.parse(JSON.stringify(getSeasonFormula(formulaSeasonKey)));
     renderFormulaRows();
   });
+}
+function saveOrKeyFromSettings(){
+  const val = document.getElementById('orKeyInput').value;
+  saveOpenRouterKey(val);
+  document.getElementById('orKeyMsg').textContent = val.trim() ? 'Saved to this device.' : 'Cleared.';
 }
 function saveSiteTitle(){
   const val = document.getElementById('siteTitleInput').value.trim() || 'Wing Shoot Gamebook';
@@ -832,7 +904,7 @@ function renderAddForm(app){
     <div class="card">
       <h2>${editing ? 'Edit sheet' : 'Add a new sheet'}</h2>
       <p class="hint">Fill this in from the paper wing shoot sheet.</p>
-      ${OPENROUTER_API_KEY ? `
+      ${authRole==='admin' ? `
       <div class="section-title">Photo pre-fill</div>
       <p class="hint">Upload a photo — fields below get pre-filled, check against the paper before saving.</p>
       <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">
@@ -935,6 +1007,13 @@ function fetchWeatherFor(dateStr){
 function handlePhotoUpload(evt){
   const file = evt.target.files[0]; if(!file) return;
   const msg = document.getElementById('photoMsg');
+  const orKey = getOpenRouterKey();
+  if (!orKey){
+    msg.className='msg err';
+    msg.textContent = 'No photo-reading key set up yet — go to Settings to add your free OpenRouter key.';
+    evt.target.value = '';
+    return;
+  }
   msg.className='msg'; msg.textContent='Reading the sheet…';
   const speciesNames = (appSettings.speciesList||DEFAULT_SPECIES).map(s=>s.name);
 
@@ -944,7 +1023,7 @@ function handlePhotoUpload(evt){
 Only include species with a number written next to them. Omit illegible fields rather than guessing.`;
     fetch(`https://openrouter.ai/api/v1/chat/completions`, {
       method:'POST',
-      headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${OPENROUTER_API_KEY}`},
+      headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
       body: JSON.stringify({
         model: 'openrouter/free', // auto-picks a free vision-capable model
         messages: [{
