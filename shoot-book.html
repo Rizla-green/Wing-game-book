@@ -189,7 +189,7 @@ button.btn:disabled{ opacity:0.45; cursor:not-allowed; }
   <div class="titlebar">
     <div>
       <h1 id="siteTitle">Wing Shoot Gamebook</h1>
-      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb</div>
+      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v11</div>
     </div>
     <div class="admin-bar"><span id="authStatus">checking…</span></div>
   </div>
@@ -259,6 +259,7 @@ function seasonKeyForDate(d){
   return null;
 }
 function seasonLabel(startYear){ return startYear + "/" + String(startYear+1).slice(-2); }
+function shotToKillRatio(cartridges, totalShot){ return totalShot>0 ? (cartridges/totalShot).toFixed(1) : '—'; }
 function allSeasonKeys(){
   const keys = new Set();
   allSheets.forEach(s=>{ const k=seasonKeyForDate(new Date(s.date)); if(k!==null) keys.add(k); });
@@ -478,7 +479,7 @@ function handleShootDaysPhotoUpload(evt){
     const prompt = `You are reading a printed "Shoot Days & Guest Schedule" sheet for a wing shoot season. It has a table with columns: Day (name of weekday), Date, Guest 1, Guest 2 / Note. Return ONLY valid JSON, no markdown, no commentary, in exactly this shape:
 {"rows":[{"date":"YYYY-MM-DD","guest1":"","guest2":""}]}
 Convert each date shown (which may be in DD.MM.YY format) into YYYY-MM-DD format. If a Guest 1 or Guest 2 cell is blank or shows a dash, leave it as an empty string. Include every row from the table. Respond with the JSON object only — no other text, notes, or explanation before or after it.`;
-    fetch(`https://openrouter.ai/api/v1/chat/completions`, {
+    fetchWithTimeout(`https://openrouter.ai/api/v1/chat/completions`, {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
       body: JSON.stringify({
@@ -491,7 +492,7 @@ Convert each date shown (which may be in DD.MM.YY format) into YYYY-MM-DD format
           ]
         }]
       })
-    }).then(r=>r.json()).then(data=>{
+    }, 45000).then(r=>r.json()).then(data=>{
       if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
       if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
       const text = data.choices[0].message.content;
@@ -505,7 +506,11 @@ Convert each date shown (which may be in DD.MM.YY format) into YYYY-MM-DD format
       Promise.all(batchPromises).then(()=>{
         msg.className='msg ok'; msg.textContent=`Added ${added} shoot day(s) — check every row against the photo below, dates and guest names can be edited any time.`;
       });
-    }).catch(err=>{ msg.className='msg err'; msg.textContent="Couldn't read that photo: " + err.message; });
+    }).catch(err=>{
+      const isTimeout = err.name === 'AbortError';
+      msg.className='msg err';
+      msg.textContent = isTimeout ? "The photo-reading service didn't respond in time (45s) — the free model may be overloaded right now. Try again in a minute, or fill this in by hand." : "Couldn't read that photo: " + err.message;
+    });
   }).catch(err=>{ msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message; });
 }
 function updateShootDay(id, field, val){
@@ -573,7 +578,7 @@ function renderTotals(app){
   const seasonSheets = allSheets.filter(s=>seasonKeyForDate(new Date(s.date))===selectedSeason);
   const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
   const speciesTotals = {}; speciesList.forEach(sp=>speciesTotals[sp.name]=0);
-  let totalShot=0, grandTotal=0;
+  let totalShot=0, grandTotal=0, cartridges=0;
   const attendance = {}; // name -> role
   seasonSheets.forEach(s=>{
     Object.entries(s.game||{}).forEach(([key,count])=>{
@@ -582,6 +587,7 @@ function renderTotals(app){
     });
     totalShot += Number(s.totalShot||0);
     grandTotal += Number(s.grandTotal||0);
+    cartridges += Number(s.cartridges||0);
     (s.guns||[]).forEach(p=>addAtt(p.name,'Gun'));
     (s.beaters||[]).forEach(p=>addAtt(p.name,'Beater'));
     (s.guests||[]).forEach(p=>addAtt(p.name,'Guest'));
@@ -601,6 +607,8 @@ function renderTotals(app){
       <div class="headline"><div class="num">${grandTotal.toLocaleString()}</div><div class="label">grand total, season ${seasonLabel(selectedSeason)}</div></div>
       <div class="stat-grid">
         <div class="stat"><div class="n">${totalShot}</div><div class="l">total shot</div></div>
+        <div class="stat"><div class="n">${cartridges}</div><div class="l">cartridges</div></div>
+        <div class="stat"><div class="n">${shotToKillRatio(cartridges,totalShot)}</div><div class="l">shots per kill</div></div>
         <div class="stat"><div class="n">${speciesRows.length}</div><div class="l">species taken</div></div>
         <div class="stat"><div class="n">${attRows.length}</div><div class="l">guns, beaters &amp; guests this season</div></div>
       </div>
@@ -632,20 +640,20 @@ function aggregateSeason(seasonKey, cutoffMonthDay){
   const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
   const speciesTotals={}; speciesList.forEach(sp=>speciesTotals[sp.name]=0);
   const attendance={};
-  let totalShot=0, grandTotal=0;
+  let totalShot=0, grandTotal=0, cartridges=0;
   sheets.forEach(s=>{
     Object.entries(s.game||{}).forEach(([key,count])=>{
       const base=key.replace(/ \((M|F)\)$/,'');
       speciesTotals[base]=(speciesTotals[base]||0)+Number(count||0);
     });
-    totalShot+=Number(s.totalShot||0); grandTotal+=Number(s.grandTotal||0);
+    totalShot+=Number(s.totalShot||0); grandTotal+=Number(s.grandTotal||0); cartridges+=Number(s.cartridges||0);
     (s.guns||[]).forEach(p=>addAtt(p.name,'Gun'));
     (s.beaters||[]).forEach(p=>addAtt(p.name,'Beater'));
     (s.guests||[]).forEach(p=>addAtt(p.name,'Guest'));
   });
   function addAtt(name,role){ if(!name)return; attendance[name]=role; }
   const speciesCount = Object.values(speciesTotals).filter(v=>v>0).length;
-  return { sheets, speciesTotals, speciesCount, attendance, totalShot, grandTotal };
+  return { sheets, speciesTotals, speciesCount, attendance, totalShot, grandTotal, cartridges };
 }
 function renderCompare(app){
   const seasons = allSeasonKeys();
@@ -677,8 +685,8 @@ function renderCompare(app){
     </div>
     <div class="card" style="overflow-x:auto;">
       <h2>Headline totals</h2>
-      <table><tr><th>Season</th><th class="num">Grand total</th><th class="num">Total shot</th><th class="num">Species</th><th class="num">Sheets</th></tr>
-      ${results.map(r=>`<tr><td>${seasonLabel(r.key)}</td><td class="num">${r.agg.grandTotal.toLocaleString()}</td><td class="num">${r.agg.totalShot}</td><td class="num">${r.agg.speciesCount}</td><td class="num">${r.agg.sheets.length}</td></tr>`).join('')}
+      <table><tr><th>Season</th><th class="num">Grand total</th><th class="num">Total shot</th><th class="num">Cartridges</th><th class="num">Shots per kill</th><th class="num">Species</th><th class="num">Sheets</th></tr>
+      ${results.map(r=>`<tr><td>${seasonLabel(r.key)}</td><td class="num">${r.agg.grandTotal.toLocaleString()}</td><td class="num">${r.agg.totalShot}</td><td class="num">${r.agg.cartridges}</td><td class="num">${shotToKillRatio(r.agg.cartridges,r.agg.totalShot)}</td><td class="num">${r.agg.speciesCount}</td><td class="num">${r.agg.sheets.length}</td></tr>`).join('')}
       </table>
     </div>
     <div class="card" style="overflow-x:auto;">
@@ -755,7 +763,7 @@ function renderSheetDetail(app){
     ${(s.drives && s.drives.length) ? `<div class="card"><h2>Drives</h2><table><tr><th>Drive</th><th>Species</th><th class="num">Shots</th></tr>
       ${s.drives.map(d=>`<tr><td>${d.name}</td><td>${d.species}</td><td class="num">${d.shots}</td></tr>`).join('')}</table></div>` : ''}
 
-    ${winners.size ? `<p class="hint" style="margin:0 0 -8px;">🏆 highlighted in red = closest sweep guess to the grand total (${(s.grandTotal||0).toLocaleString()}).</p>` : ''}
+    ${winners.size ? `<p class="hint" style="margin:18px 0 12px;">🏆 highlighted in red = closest sweep guess to the grand total (${(s.grandTotal||0).toLocaleString()}).</p>` : ''}
     <div class="two-col">
       <div class="card"><h2>Guns</h2><table><tr><th>Name</th><th class="num">Sweep</th>${appSettings.paidStatusEnabled?'<th class="num">Have paid</th>':''}</tr>
         ${(s.guns||[]).map(p=>`<tr class="${rowClass(p.name)}"><td>${p.name}</td><td class="num">${p.sweep||''}</td>${appSettings.paidStatusEnabled?`<td class="num">${p.havePaid?'✓':''}</td>`:''}</tr>`).join('')}</table></div>
@@ -771,6 +779,7 @@ function renderSheetDetail(app){
       <div class="card"><h2>This week's totals</h2><table>
         <tr><td>Total shot</td><td class="num">${s.totalShot||0}</td></tr>
         <tr><td>Cartridges</td><td class="num">${s.cartridges||0}</td></tr>
+        <tr><td>Shots per kill</td><td class="num">${shotToKillRatio(s.cartridges||0, s.totalShot||0)}</td></tr>
         <tr class="total-row"><td>Grand total</td><td class="num">${(s.grandTotal||0).toLocaleString()}</td></tr>
       </table></div>
     </div>
@@ -1131,6 +1140,7 @@ function renderAddForm(app){
       <div class="card" style="background:var(--paper);">
         <div class="headline" style="margin-bottom:6px;"><div class="num" id="liveGrandTotal" style="font-size:36px;">0</div><div class="label">grand total (live)</div></div>
         <div id="liveFormulaBreakdown"></div>
+        <p class="hint" style="margin:10px 0 0;">Shots per kill: <b id="liveShotToKill" style="color:var(--ink);">—</b></p>
       </div>
 
       <div style="margin-top:18px;display:flex;gap:10px;">
@@ -1205,7 +1215,7 @@ function handlePhotoUpload(evt){
     const prompt = `You are reading a handwritten "wing shoot" sheet. It has two people tables: "GUNS" and "BEATERS" (name, sweep number). It has a "GAME SHOT NO" table listing species and counts, from this list: ${speciesNames.join(', ')}. It shows TOTAL SHOT and CARTRIDGES figures. Return ONLY valid JSON, no markdown:
 {"guns":[{"name":"","sweep":0}],"beaters":[{"name":"","sweep":0}],"game":{"Pheasant":0},"totalShot":0,"cartridges":0}
 Only include species with a number written next to them. Omit illegible fields rather than guessing. Respond with the JSON object only — no other text, notes, or explanation before or after it.`;
-    fetch(`https://openrouter.ai/api/v1/chat/completions`, {
+    fetchWithTimeout(`https://openrouter.ai/api/v1/chat/completions`, {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
       body: JSON.stringify({
@@ -1218,7 +1228,7 @@ Only include species with a number written next to them. Omit illegible fields r
           ]
         }]
       })
-    }).then(r=>r.json()).then(data=>{
+    }, 45000).then(r=>r.json()).then(data=>{
       if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
       if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
       const text = data.choices[0].message.content;
@@ -1231,10 +1241,20 @@ Only include species with a number written next to them. Omit illegible fields r
       if (parsed.cartridges) document.getElementById('f_cartridges').value = parsed.cartridges;
       updateLiveTotal();
       msg.className='msg ok'; msg.textContent='Pre-filled — check every field against the paper sheet before saving.';
-    }).catch(err=>{ msg.className='msg err'; msg.textContent="Couldn't read that photo: " + err.message; });
+    }).catch(err=>{
+      const isTimeout = err.name === 'AbortError';
+      msg.className='msg err';
+      msg.textContent = isTimeout ? "The photo-reading service didn't respond in time (45s) — the free model may be overloaded right now. Try again in a minute, or fill this in by hand." : "Couldn't read that photo: " + err.message;
+    });
   }).catch(err=>{ msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message; });
 }
 
+function fetchWithTimeout(url, options, timeoutMs){
+  const controller = new AbortController();
+  const timer = setTimeout(()=> controller.abort(), timeoutMs);
+  return fetch(url, {...options, signal: controller.signal})
+    .finally(()=> clearTimeout(timer));
+}
 function extractJson(text){
   // Free AI models sometimes wrap the JSON in extra commentary or markdown —
   // pull out just the {...} block regardless of what surrounds it.
@@ -1345,6 +1365,7 @@ function updateLiveTotal(){
   const grand = evalFormula(formula, facts);
   document.getElementById('liveGrandTotal').textContent = grand.toLocaleString();
   document.getElementById('liveFormulaBreakdown').innerHTML = formulaBreakdownHTML(formula, facts, grand);
+  document.getElementById('liveShotToKill').textContent = shotToKillRatio(cartridges, totalShot);
 }
 
 function cancelForm(){ const wasEditing=editingId; editingId=null; switchTab(wasEditing?'sheet-detail':'sheets'); if(wasEditing){editingId=wasEditing; currentTab='sheet-detail'; render();} }
