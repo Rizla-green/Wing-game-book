@@ -189,7 +189,7 @@ button.btn:disabled{ opacity:0.45; cursor:not-allowed; }
   <div class="titlebar">
     <div>
       <h1 id="siteTitle">Wing Shoot Gamebook</h1>
-      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v11</div>
+      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v13</div>
     </div>
     <div class="admin-bar"><span id="authStatus">checking…</span></div>
   </div>
@@ -473,12 +473,17 @@ function handleShootDaysPhotoUpload(evt){
     evt.target.value = '';
     return;
   }
-  msg.className='msg'; msg.textContent='Reading the schedule…';
+  uploadCancelRequested = false;
+  msg.className='msg';
+  msg.innerHTML = 'Reading the schedule… <button class="btn ghost small" onclick="cancelPhotoUpload(\'shootDaysPhotoMsg\')" style="margin-left:8px;">Cancel</button>';
 
   compressImage(file, 1600, 0.82).then(base64 => {
+    if (uploadCancelRequested) return;
     const prompt = `You are reading a printed "Shoot Days & Guest Schedule" sheet for a wing shoot season. It has a table with columns: Day (name of weekday), Date, Guest 1, Guest 2 / Note. Return ONLY valid JSON, no markdown, no commentary, in exactly this shape:
 {"rows":[{"date":"YYYY-MM-DD","guest1":"","guest2":""}]}
 Convert each date shown (which may be in DD.MM.YY format) into YYYY-MM-DD format. If a Guest 1 or Guest 2 cell is blank or shows a dash, leave it as an empty string. Include every row from the table. Respond with the JSON object only — no other text, notes, or explanation before or after it.`;
+    const controller = new AbortController();
+    activeUploadController = controller;
     fetchWithTimeout(`https://openrouter.ai/api/v1/chat/completions`, {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
@@ -492,7 +497,7 @@ Convert each date shown (which may be in DD.MM.YY format) into YYYY-MM-DD format
           ]
         }]
       })
-    }, 45000).then(r=>r.json()).then(data=>{
+    }, 45000, controller).then(r=>r.json()).then(data=>{
       if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
       if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
       const text = data.choices[0].message.content;
@@ -507,11 +512,15 @@ Convert each date shown (which may be in DD.MM.YY format) into YYYY-MM-DD format
         msg.className='msg ok'; msg.textContent=`Added ${added} shoot day(s) — check every row against the photo below, dates and guest names can be edited any time.`;
       });
     }).catch(err=>{
+      if (uploadCancelRequested) return; // already showing "Cancelled."
       const isTimeout = err.name === 'AbortError';
       msg.className='msg err';
       msg.textContent = isTimeout ? "The photo-reading service didn't respond in time (45s) — the free model may be overloaded right now. Try again in a minute, or fill this in by hand." : "Couldn't read that photo: " + err.message;
     });
-  }).catch(err=>{ msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message; });
+  }).catch(err=>{
+    if (uploadCancelRequested) return;
+    msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message;
+  });
 }
 function updateShootDay(id, field, val){
   db.collection('shootdays').doc(id).update({[field]: val});
@@ -1101,7 +1110,10 @@ function renderAddForm(app){
       <div class="section-title">Photo pre-fill</div>
       <p class="hint">Upload a photo — fields below get pre-filled, check against the paper before saving.</p>
       <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">
-      <div class="msg" id="photoMsg"></div>` : ''}
+      <div class="msg" id="photoMsg"></div>
+      <p class="hint" style="margin-top:14px;">Or, if you've already converted the sheet to a spreadsheet:</p>
+      <input type="file" accept=".xlsx,.xls" id="excelInput" onchange="handleExcelUpload(event)">
+      <div class="msg" id="excelMsg"></div>` : ''}
 
       <div class="section-title">When</div>
       <div class="grid2">
@@ -1208,13 +1220,18 @@ function handlePhotoUpload(evt){
     evt.target.value = '';
     return;
   }
-  msg.className='msg'; msg.textContent='Reading the sheet…';
+  uploadCancelRequested = false;
+  msg.className='msg';
+  msg.innerHTML = 'Reading the sheet… <button class="btn ghost small" onclick="cancelPhotoUpload(\'photoMsg\')" style="margin-left:8px;">Cancel</button>';
   const speciesNames = (appSettings.speciesList||DEFAULT_SPECIES).map(s=>s.name);
 
   compressImage(file, 1600, 0.82).then(base64 => {
+    if (uploadCancelRequested) return;
     const prompt = `You are reading a handwritten "wing shoot" sheet. It has two people tables: "GUNS" and "BEATERS" (name, sweep number). It has a "GAME SHOT NO" table listing species and counts, from this list: ${speciesNames.join(', ')}. It shows TOTAL SHOT and CARTRIDGES figures. Return ONLY valid JSON, no markdown:
 {"guns":[{"name":"","sweep":0}],"beaters":[{"name":"","sweep":0}],"game":{"Pheasant":0},"totalShot":0,"cartridges":0}
 Only include species with a number written next to them. Omit illegible fields rather than guessing. Respond with the JSON object only — no other text, notes, or explanation before or after it.`;
+    const controller = new AbortController();
+    activeUploadController = controller;
     fetchWithTimeout(`https://openrouter.ai/api/v1/chat/completions`, {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
@@ -1228,7 +1245,7 @@ Only include species with a number written next to them. Omit illegible fields r
           ]
         }]
       })
-    }, 45000).then(r=>r.json()).then(data=>{
+    }, 45000, controller).then(r=>r.json()).then(data=>{
       if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
       if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
       const text = data.choices[0].message.content;
@@ -1242,18 +1259,101 @@ Only include species with a number written next to them. Omit illegible fields r
       updateLiveTotal();
       msg.className='msg ok'; msg.textContent='Pre-filled — check every field against the paper sheet before saving.';
     }).catch(err=>{
+      if (uploadCancelRequested) return;
       const isTimeout = err.name === 'AbortError';
       msg.className='msg err';
       msg.textContent = isTimeout ? "The photo-reading service didn't respond in time (45s) — the free model may be overloaded right now. Try again in a minute, or fill this in by hand." : "Couldn't read that photo: " + err.message;
     });
-  }).catch(err=>{ msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message; });
+  }).catch(err=>{
+    if (uploadCancelRequested) return;
+    msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message;
+  });
 }
 
-function fetchWithTimeout(url, options, timeoutMs){
-  const controller = new AbortController();
+function handleExcelUpload(evt){
+  const file = evt.target.files[0]; if(!file) return;
+  const msg = document.getElementById('excelMsg');
+  const orKey = getOpenRouterKey();
+  if (!orKey){
+    msg.className='msg err';
+    msg.textContent = 'No reading key set up yet — go to Settings to add your free OpenRouter key.';
+    evt.target.value = '';
+    return;
+  }
+  if (typeof XLSX === 'undefined'){
+    msg.className='msg err';
+    msg.textContent = 'Excel library failed to load — check your internet connection and try again.';
+    return;
+  }
+  uploadCancelRequested = false;
+  msg.className='msg';
+  msg.innerHTML = 'Reading the spreadsheet… <button class="btn ghost small" onclick="cancelPhotoUpload(\'excelMsg\')" style="margin-left:8px;">Cancel</button>';
+  const speciesNames = (appSettings.speciesList||DEFAULT_SPECIES).map(s=>s.name);
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    if (uploadCancelRequested) return;
+    let csvText;
+    try {
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const sheetName = wb.SheetNames[0];
+      csvText = XLSX.utils.sheet_to_csv(wb.Sheets[sheetName]);
+    } catch (err){
+      msg.className='msg err'; msg.textContent = "Couldn't read that spreadsheet: " + err.message;
+      return;
+    }
+    const prompt = `Here is the raw content of a spreadsheet (as CSV) recording a "wing shoot" sheet. It should contain two people tables: "GUNS" and "BEATERS" (name, sweep number), a game/species table listing counts for species from this list: ${speciesNames.join(', ')}, and TOTAL SHOT and CARTRIDGES figures — wherever they appear in the data below. Return ONLY valid JSON, no markdown, in exactly this shape:
+{"guns":[{"name":"","sweep":0}],"beaters":[{"name":"","sweep":0}],"game":{"Pheasant":0},"totalShot":0,"cartridges":0}
+Only include species with a number given. Omit anything unclear rather than guessing. Respond with the JSON object only — no other text before or after it.
+
+SPREADSHEET CONTENT:
+${csvText}`;
+    const controller = new AbortController();
+    activeUploadController = controller;
+    fetchWithTimeout(`https://openrouter.ai/api/v1/chat/completions`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
+      body: JSON.stringify({
+        model: 'openrouter/free',
+        messages: [{ role: 'user', content: prompt }]
+      })
+    }, 45000, controller).then(r=>r.json()).then(data=>{
+      if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
+      if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
+      const text = data.choices[0].message.content;
+      const parsed = extractJson(text);
+      if ((parsed.guns||[]).length) formGuns = parsed.guns;
+      if ((parsed.beaters||[]).length) formBeaters = parsed.beaters;
+      renderPersonRows('guns'); renderPersonRows('beaters');
+      renderGameRows(parsed.game||{});
+      if (parsed.totalShot) document.getElementById('f_totalShot').value = parsed.totalShot;
+      if (parsed.cartridges) document.getElementById('f_cartridges').value = parsed.cartridges;
+      updateLiveTotal();
+      msg.className='msg ok'; msg.textContent='Pre-filled — check every field against the spreadsheet before saving.';
+    }).catch(err=>{
+      if (uploadCancelRequested) return;
+      const isTimeout = err.name === 'AbortError';
+      msg.className='msg err';
+      msg.textContent = isTimeout ? "The reading service didn't respond in time (45s) — the free model may be overloaded right now. Try again in a minute, or fill this in by hand." : "Couldn't read that spreadsheet: " + err.message;
+    });
+  };
+  reader.onerror = () => { msg.className='msg err'; msg.textContent = "Couldn't read that file."; };
+  reader.readAsArrayBuffer(file);
+}
+
+let activeUploadController = null;
+let uploadCancelRequested = false;
+function fetchWithTimeout(url, options, timeoutMs, controller){
+  controller = controller || new AbortController();
   const timer = setTimeout(()=> controller.abort(), timeoutMs);
   return fetch(url, {...options, signal: controller.signal})
     .finally(()=> clearTimeout(timer));
+}
+function cancelPhotoUpload(msgElId){
+  uploadCancelRequested = true;
+  if (activeUploadController) activeUploadController.abort();
+  const msg = document.getElementById(msgElId);
+  if (msg){ msg.className='msg err'; msg.textContent='Cancelled.'; }
 }
 function extractJson(text){
   // Free AI models sometimes wrap the JSON in extra commentary or markdown —
@@ -1265,8 +1365,9 @@ function extractJson(text){
   }
   return JSON.parse(text.slice(start, end+1));
 }
-function compressImage(file, maxDim, quality){
-  return new Promise((resolve, reject) => {
+function compressImage(file, maxDim, quality, timeoutMs){
+  timeoutMs = timeoutMs || 15000;
+  const work = new Promise((resolve, reject) => {
     const img = new Image();
     const reader = new FileReader();
     reader.onload = () => {
@@ -1288,6 +1389,8 @@ function compressImage(file, maxDim, quality){
     reader.onerror = () => reject(new Error('Could not read file'));
     reader.readAsDataURL(file);
   });
+  const timeout = new Promise((_, reject) => setTimeout(()=> reject(new Error('Image processing timed out')), timeoutMs));
+  return Promise.race([work, timeout]);
 }
 
 function renderPersonRows(kind){
