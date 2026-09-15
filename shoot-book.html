@@ -200,7 +200,7 @@ button.btn:disabled{ opacity:0.45; cursor:not-allowed; }
   <div class="titlebar">
     <div>
       <h1 id="siteTitle">Wing Shoot Gamebook</h1>
-      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v19</div>
+      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v20</div>
     </div>
     <div class="admin-bar"><span id="authStatus">checking…</span></div>
   </div>
@@ -219,6 +219,11 @@ firebase.initializeApp({
   appId: "1:994989712713:web:178f22cf7a1617af6be698"
 });
 const db = firebase.firestore();
+db.enablePersistence({ synchronizeTabs: true }).catch(err=>{
+  // Common, harmless reasons this can fail: multiple tabs open (rare on a phone),
+  // or an old/unsupported browser. The app still works, just without offline queuing.
+  console.warn('Offline persistence not enabled:', err.code);
+});
 const auth = firebase.auth();
 
 const DEFAULT_SPECIES = [
