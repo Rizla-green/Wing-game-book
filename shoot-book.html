@@ -200,7 +200,7 @@ button.btn:disabled{ opacity:0.45; cursor:not-allowed; }
   <div class="titlebar">
     <div>
       <h1 id="siteTitle">Wing Shoot Gamebook</h1>
-      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v20</div>
+      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v22</div>
     </div>
     <div class="admin-bar"><span id="authStatus">checking…</span></div>
   </div>
@@ -629,7 +629,6 @@ function renderTotals(app){
       <span class="chip">${seasonSheets.length} sheet${seasonSheets.length===1?'':'s'} logged</span>
     </div>
     <div class="card">
-      <div class="headline"><div class="num">${grandTotal.toLocaleString()}</div><div class="label">grand total, season ${seasonLabel(selectedSeason)}</div></div>
       <div class="stat-grid">
         <div class="stat"><div class="n">${totalShot}</div><div class="l">total shot</div></div>
         <div class="stat"><div class="n">${cartridges}</div><div class="l">cartridges</div></div>
@@ -687,12 +686,6 @@ function renderCompare(app){
   }
   if (compareSelected.size===0) compareSelected = new Set(seasons.slice(0,2));
   if (!compareCutoffDate){ const t=new Date(); compareCutoffDate={month:t.getMonth(), day:t.getDate()}; }
-  const selected = seasons.filter(k=>compareSelected.has(k));
-  const cutoff = compareCutoffOn ? compareCutoffDate : null;
-  const results = selected.map(k=>({key:k, agg: aggregateSeason(k, cutoff)}));
-  const allNames = new Set();
-  results.forEach(r=>Object.keys(r.agg.attendance).forEach(n=>allNames.add(n)));
-  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
 
   app.innerHTML = `
     <div class="card">
@@ -704,13 +697,29 @@ function renderCompare(app){
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
           <input type="checkbox" ${compareCutoffOn?'checked':''} onchange="toggleCutoff(this.checked)"> Only count sheets up to</label>
-        <input type="date" value="2000-${String(compareCutoffDate.month+1).padStart(2,'0')}-${String(compareCutoffDate.day).padStart(2,'0')}" ${compareCutoffOn?'':'disabled'} onchange="setCutoffDate(this.value)" style="width:auto;">
+        <select id="cutoffDaySelect" onchange="setCutoffDay(this.value)" ${compareCutoffOn?'':'disabled'} style="width:auto;">
+          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}" ${d===compareCutoffDate.day?'selected':''}>${d}</option>`).join('')}
+        </select>
+        <select id="cutoffMonthSelect" onchange="setCutoffMonth(this.value)" ${compareCutoffOn?'':'disabled'} style="width:auto;">
+          ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m,i)=>`<option value="${i}" ${i===compareCutoffDate.month?'selected':''}>${m}</option>`).join('')}
+        </select>
       </div>
     </div>
+    <div id="compareResultsBox"></div>
+  `;
+  renderCompareResultsBox();
+}
+function renderCompareResultsBox(){
+  const seasons = allSeasonKeys();
+  const selected = seasons.filter(k=>compareSelected.has(k));
+  const cutoff = compareCutoffOn ? compareCutoffDate : null;
+  const results = selected.map(k=>({key:k, agg: aggregateSeason(k, cutoff)}));
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  document.getElementById('compareResultsBox').innerHTML = `
     <div class="card" style="overflow-x:auto;">
       <h2>Headline totals</h2>
-      <table><tr><th>Season</th><th class="num">Grand total</th><th class="num">Total shot</th><th class="num">Cartridges</th><th class="num">Shots per kill</th><th class="num">Species</th><th class="num">Sheets</th></tr>
-      ${results.map(r=>`<tr><td>${seasonLabel(r.key)}</td><td class="num">${r.agg.grandTotal.toLocaleString()}</td><td class="num">${r.agg.totalShot}</td><td class="num">${r.agg.cartridges}</td><td class="num">${shotToKillRatio(r.agg.cartridges,r.agg.totalShot)}</td><td class="num">${r.agg.speciesCount}</td><td class="num">${r.agg.sheets.length}</td></tr>`).join('')}
+      <table><tr><th>Season</th><th class="num">Total shot</th><th class="num">Cartridges</th><th class="num">Shots per kill</th><th class="num">Species</th><th class="num">Sheets</th></tr>
+      ${results.map(r=>`<tr><td>${seasonLabel(r.key)}</td><td class="num">${r.agg.totalShot}</td><td class="num">${r.agg.cartridges}</td><td class="num">${shotToKillRatio(r.agg.cartridges,r.agg.totalShot)}</td><td class="num">${r.agg.speciesCount}</td><td class="num">${r.agg.sheets.length}</td></tr>`).join('')}
       </table>
     </div>
     <div class="card" style="overflow-x:auto;">
@@ -721,9 +730,16 @@ function renderCompare(app){
     </div>
   `;
 }
-function toggleCompareSeason(key,checked){ if(checked) compareSelected.add(key); else compareSelected.delete(key); render(); }
-function toggleCutoff(checked){ compareCutoffOn=checked; render(); }
-function setCutoffDate(val){ const d=new Date(val); compareCutoffDate={month:d.getMonth(), day:d.getDate()}; render(); }
+function toggleCompareSeason(key,checked){ if(checked) compareSelected.add(key); else compareSelected.delete(key); renderCompareResultsBox(); }
+function toggleCutoff(checked){
+  compareCutoffOn=checked;
+  const d = document.getElementById('cutoffDaySelect'), m = document.getElementById('cutoffMonthSelect');
+  if (d) d.disabled = !checked;
+  if (m) m.disabled = !checked;
+  renderCompareResultsBox();
+}
+function setCutoffDay(val){ compareCutoffDate.day = Number(val); renderCompareResultsBox(); }
+function setCutoffMonth(val){ compareCutoffDate.month = Number(val); renderCompareResultsBox(); }
 
 /* ================= WEEKLY SHEETS LIST + DETAIL ================= */
 let sheetsListSeason = null;
@@ -779,7 +795,7 @@ function renderSheetDetail(app){
     <div class="card">
       <span class="link" style="cursor:pointer;color:var(--rust);font-size:13px;" onclick="switchTab('sheets')">&larr; back to weekly sheets</span>
       <h2 style="margin-top:10px;">${formatDate(s.date)}</h2>
-      ${s.weather ? `<p class="hint" style="margin-top:6px;">${s.weather.summary} · ${s.weather.tempMax}°C / ${s.weather.tempMin}°C · wind ${s.weather.windMax} km/h ${s.weather.windDir||''}</p>` : ''}
+      ${s.weather ? `<p class="hint" style="margin-top:6px;">${s.weather.summary} · ${s.weather.tempMax}°C / ${s.weather.tempMin}°C · wind ${s.weather.windMax} mph ${s.weather.windDir||''}</p>` : ''}
       ${authRole==='admin' ? `<button class="btn ghost small" style="margin-top:6px;" onclick="editSheet('${s.id}')">Edit this sheet</button>
         <button class="btn danger small" style="margin-top:6px;" onclick="deleteSheet('${s.id}')">Delete</button>` : ''}
     </div>
@@ -1150,7 +1166,6 @@ function renderAddForm(app){
         <div class="field"><label>Notes (optional)</label><input type="text" id="f_notes" value="${editing && editing.notes ? editing.notes : ''}"></div>
       </div>
       <div class="field" id="weatherBox"></div>
-      <div class="msg hint" id="guestPrefillMsg"></div>
 
       <div class="section-title">Guns</div>
       <div id="gunsRows"></div>
@@ -1159,10 +1174,6 @@ function renderAddForm(app){
       <div class="section-title">Beaters</div>
       <div id="beatersRows"></div>
       <button class="btn ghost small" onclick="addPersonRow('beaters')">+ add beater</button>
-
-      <div class="section-title">Guests</div>
-      <div id="guestsRows"></div>
-      <button class="btn ghost small" onclick="addPersonRow('guests')">+ add guest</button>
 
       <div class="section-title">Game shot</div>
       <div id="gameRows"></div>
@@ -1191,13 +1202,12 @@ function renderAddForm(app){
       <div class="msg err" id="formMsg"></div>
     </div>
   `;
-  renderPersonRows('guns'); renderPersonRows('beaters'); renderPersonRows('guests');
+  renderPersonRows('guns'); renderPersonRows('beaters');
   renderGameRows(gameVals);
   if (appSettings.drivesEnabled) renderDriveRows();
   renderWeatherBox();
-  if (editing && editing.date) tryPrefillGuests(editing.date, true);
   ['f_totalShot','f_cartridges'].forEach(id=>document.getElementById(id).addEventListener('input', updateLiveTotal));
-  document.getElementById('f_date').addEventListener('change', e=>{ fetchWeatherFor(e.target.value); tryPrefillGuests(e.target.value, false); });
+  document.getElementById('f_date').addEventListener('change', e=>{ fetchWeatherFor(e.target.value); });
   updateLiveTotal();
 }
 
@@ -1207,27 +1217,14 @@ function applyDetectedDate(dateStr){
   if (!dateInput) return false;
   dateInput.value = dateStr;
   fetchWeatherFor(dateStr);
-  tryPrefillGuests(dateStr, false);
   updateLiveTotal();
   return true;
-}
-function tryPrefillGuests(dateStr, silentIfNoneNew){
-  const day = allShootDays.find(d=>d.date===dateStr);
-  const msg = document.getElementById('guestPrefillMsg');
-  if (!day || (!day.guest1 && !day.guest2)){ if(msg) msg.textContent=''; return; }
-  const names = [day.guest1, day.guest2].filter(Boolean);
-  let added = 0;
-  names.forEach(n=>{
-    if (!formGuests.some(g=>g.name===n)){ formGuests.push({name:n, sweep:''}); added++; }
-  });
-  if (added>0){ renderPersonRows('guests'); if(msg) msg.textContent = `${added} guest(s) pulled in from the Shoot Days schedule for this date.`; }
-  else if (!silentIfNoneNew && msg) msg.textContent = '';
 }
 
 function renderWeatherBox(){
   const box = document.getElementById('weatherBox'); if(!box) return;
   if (!formWeather){ box.innerHTML = `<label>Weather</label><p class="hint" style="margin:0;">Pick a date above to look up the weather automatically.</p>`; }
-  else { box.innerHTML = `<label>Weather</label><p style="margin:0;font-size:14px;">${formWeather.summary} · ${formWeather.tempMax}°C / ${formWeather.tempMin}°C · wind ${formWeather.windMax} km/h ${formWeather.windDir||''}</p>`; }
+  else { box.innerHTML = `<label>Weather</label><p style="margin:0;font-size:14px;">${formWeather.summary} · ${formWeather.tempMax}°C / ${formWeather.tempMin}°C · wind ${formWeather.windMax} mph ${formWeather.windDir||''}</p>`; }
 }
 function weatherCodeToText(code){
   const map={0:'Clear',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',61:'Light rain',63:'Rain',65:'Heavy rain',71:'Light snow',73:'Snow',75:'Heavy snow',80:'Rain showers',81:'Rain showers',82:'Violent showers',95:'Thunderstorm'};
@@ -1241,7 +1238,7 @@ function fetchWeatherFor(dateStr){
   if (!dateStr) return;
   const box = document.getElementById('weatherBox');
   box.innerHTML = `<label>Weather</label><p class="hint" style="margin:0;">Looking up…</p>`;
-  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${SHOOT_LAT}&longitude=${SHOOT_LON}&start_date=${dateStr}&end_date=${dateStr}&daily=temperature_2m_max,temperature_2m_min,windspeed_10m_max,winddirection_10m_dominant,weathercode&timezone=auto`;
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${SHOOT_LAT}&longitude=${SHOOT_LON}&start_date=${dateStr}&end_date=${dateStr}&daily=temperature_2m_max,temperature_2m_min,windspeed_10m_max,winddirection_10m_dominant,weathercode&timezone=auto&windspeed_unit=mph`;
   fetch(url).then(r=>r.json()).then(data=>{
     if (!data.daily || !data.daily.time.length) throw new Error('no data');
     formWeather = { tempMax:data.daily.temperature_2m_max[0], tempMin:data.daily.temperature_2m_min[0], windMax:data.daily.windspeed_10m_max[0], windDir: degreesToCompass(data.daily.winddirection_10m_dominant[0]), summary:weatherCodeToText(data.daily.weathercode[0]) };
