@@ -210,14 +210,15 @@ button.btn:disabled{ opacity:0.45; cursor:not-allowed; }
 <main id="app"><div class="loading">Loading the book…</div></main>
 
 <script>
-firebase.initializeApp({
+const firebaseConfig = {
   apiKey: "AIzaSyA0s3mVFfiVMM7vJCpKM8yaz8dEQ26vAGg",
   authDomain: "wing-game-book.firebaseapp.com",
   projectId: "wing-game-book",
   storageBucket: "wing-game-book.firebasestorage.app",
   messagingSenderId: "994989712713",
   appId: "1:994989712713:web:178f22cf7a1617af6be698"
-});
+};
+firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 db.enablePersistence({ synchronizeTabs: true }).catch(err=>{
   // Common, harmless reasons this can fail: multiple tabs open (rare on a phone),
@@ -259,10 +260,10 @@ const FORMULA_TERMS = [
 
 function getOpenRouterKey(){ return localStorage.getItem('openrouter_key') || ''; }
 function saveOpenRouterKey(val){ localStorage.setItem('openrouter_key', val.trim()); }
-let allSheets = [], allShootDays = [];
-let sheetsLoaded=false, settingsLoaded=false, shootDaysLoaded=false;
-let appSettings = { drivesEnabled:false, driveNames:[], speciesList: DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", paidStatusEnabled:true, excelUploadEnabled:true, pageAccess: {shootdays:{guns:true,beaters:true}, totals:{guns:true,beaters:true}, compare:{guns:true,beaters:true}, sheets:{guns:true,beaters:true}} };
-let authRole = null; // 'admin' | 'gun' | 'beater' | null
+let allSheets = [], allShootDays = [], allUsers = [];
+let sheetsLoaded=false, settingsLoaded=false, shootDaysLoaded=false, usersLoaded=false;
+let appSettings = { drivesEnabled:false, driveNames:[], speciesList: DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", paidStatusEnabled:true, excelUploadEnabled:true, pageAccess: {shootdays:{guns:true,beaters:true,normal:true}, totals:{guns:true,beaters:true,normal:true}, compare:{guns:true,beaters:true,normal:true}, sheets:{guns:true,beaters:true,normal:true}} };
+let authRole = null; // 'admin' | 'gun' | 'beater' | 'normal' | null
 let currentTab = "shootdays";
 let editingId = null;
 
@@ -294,7 +295,13 @@ function computeAuthRole(){
   else if (user.email === GUNS_LOGIN_EMAIL){ authRole = 'gun'; }
   else if (user.email === BEATERS_LOGIN_EMAIL){ authRole = 'beater'; }
   else if ((appSettings.adminEmails||[]).includes(user.email)){ authRole = 'admin'; }
-  else { authRole = 'admin_pending'; } // signed in but not on the admin list yet
+  else {
+    // look the person up in the users list added via Settings > Users
+    const rec = usersLoaded ? allUsers.find(u=>u.email===user.email) : null;
+    if (rec && rec.role==='admin') authRole = 'admin';
+    else if (rec && rec.role==='normal') authRole = 'normal';
+    else authRole = 'admin_pending'; // signed in but not recognised yet
+  }
   renderAuthBar();
   buildNav();
   if (authRole && currentTab==='signin') currentTab='shootdays';
@@ -308,16 +315,22 @@ auth.onAuthStateChanged(user=>{
 function renderAuthBar(){
   const el = document.getElementById('authStatus');
   if (authRole){
-    const label = authRole==='admin' ? 'Admin' : authRole==='gun' ? 'Guns' : authRole==='beater' ? 'Beaters' : 'Signed in (not yet an admin)';
-    el.innerHTML = `${label} &nbsp;·&nbsp; <span class="link" onclick="doSignOut()">Sign out</span>`;
+    const label = authRole==='admin' ? 'Admin' : authRole==='gun' ? 'Guns' : authRole==='beater' ? 'Beaters' : authRole==='normal' ? 'User' : 'Signed in (not yet recognised)';
+    el.innerHTML = `${label} &nbsp;·&nbsp; <span class="link" onclick="renderChangePassword()">Change password</span> &nbsp;·&nbsp; <span class="link" onclick="doSignOut()">Sign out</span>`;
   } else {
     el.textContent = 'Please sign in';
   }
 }
 function doSignOut(){ auth.signOut(); }
+function renderChangePassword(){
+  const np = prompt('New password (at least 6 characters):');
+  if (!np) return;
+  if (np.length<6){ alert('Password must be at least 6 characters.'); return; }
+  auth.currentUser.updatePassword(np).then(()=>alert('Password changed.')).catch(e=>alert(e.message));
+}
 function canAccessPage(pageKey){
   if (authRole==='admin') return true;
-  if (authRole!=='gun' && authRole!=='beater') return false;
+  if (authRole!=='gun' && authRole!=='beater' && authRole!=='normal') return false;
   const access = appSettings.pageAccess?.[pageKey];
   if (!access) return true; // no setting saved yet = default open
   return access[authRole] !== false;
@@ -353,18 +366,26 @@ db.collection('shootdays').orderBy('date','asc').onSnapshot(snap=>{
 }, ()=>{ shootDaysLoaded = true; render(); });
 
 db.collection('settings').doc('config').onSnapshot(doc=>{
-  if (doc.exists) appSettings = { drivesEnabled:false, driveNames:[], speciesList:DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", paidStatusEnabled:true, excelUploadEnabled:true, pageAccess: {shootdays:{guns:true,beaters:true}, totals:{guns:true,beaters:true}, compare:{guns:true,beaters:true}, sheets:{guns:true,beaters:true}}, ...doc.data() };
+  if (doc.exists) appSettings = { drivesEnabled:false, driveNames:[], speciesList:DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", paidStatusEnabled:true, excelUploadEnabled:true, pageAccess: {shootdays:{guns:true,beaters:true,normal:true}, totals:{guns:true,beaters:true,normal:true}, compare:{guns:true,beaters:true,normal:true}, sheets:{guns:true,beaters:true,normal:true}}, ...doc.data() };
   document.getElementById('siteTitle').textContent = appSettings.siteTitle || "Wing Shoot Gamebook";
   settingsLoaded = true;
   computeAuthRole(); // the admin list may have just changed, so re-check role
   render();
 }, ()=>{ settingsLoaded = true; render(); });
 
+db.collection('users').onSnapshot(snap=>{
+  allUsers = snap.docs.map(d=>({uid:d.id, ...d.data()}));
+  usersLoaded = true;
+  computeAuthRole(); // someone's role may have just changed
+  if (currentTab==='settings') renderUserRows();
+  render();
+}, ()=>{ usersLoaded = true; render(); });
+
 /* ---------------- render router ---------------- */
 let selectedSeason = null;
 function render(){
   const app = document.getElementById('app');
-  if (!sheetsLoaded || !settingsLoaded || !shootDaysLoaded || lastAuthUser===undefined){ app.innerHTML='<div class="loading">Loading the book…</div>'; return; }
+  if (!sheetsLoaded || !settingsLoaded || !shootDaysLoaded || !usersLoaded || lastAuthUser===undefined){ app.innerHTML='<div class="loading">Loading the book…</div>'; return; }
   if (!authRole) return renderSignIn(app);
   if (authRole==='admin_pending') return renderPending(app);
   const detailBase = currentTab==='sheet-detail' ? 'sheets' : currentTab;
@@ -399,7 +420,7 @@ function attemptSignIn(){
   auth.signInWithEmailAndPassword(email, pass).catch(e=>{ document.getElementById('siMsg').textContent = e.message; });
 }
 function renderPending(app){
-  app.innerHTML = `<div class="card"><h2>Signed in, but not an admin yet</h2><p class="hint">Your account works, but isn't on the admin list. Ask an existing admin to add "${auth.currentUser.email}" in Settings &gt; Admins.</p><button class="btn ghost" onclick="doSignOut()">Sign out</button></div>`;
+  app.innerHTML = `<div class="card"><h2>Signed in, but not recognised yet</h2><p class="hint">Your account works, but isn't set up with a role yet. Ask an existing admin to add "${auth.currentUser.email}" in Settings &gt; Users (or Settings &gt; Admins).</p><button class="btn ghost" onclick="doSignOut()">Sign out</button></div>`;
 }
 
 /* ================= SHOOT DAYS & GUEST SCHEDULE ================= */
@@ -860,8 +881,22 @@ function renderSettings(app){
     </div>
 
     <div class="card">
-      <h2>Admins</h2>
-      <p class="hint">Full access — sheets, settings, everything. You must still create their sign-in in the Firebase console (Authentication &gt; Users &gt; Add user) — adding them here just grants them permission once they exist. Up to 20.</p>
+      <h2>Users</h2>
+      <p class="hint">Add someone their own personal sign-in. Choose <strong>Admin</strong> (full access — sheets, settings, everything) or <strong>Normal</strong> (view-only, same as the shared Guns/Beaters logins). This creates their Firebase sign-in for you — no need to use the Firebase console.</p>
+      <div class="field"><label>Their email</label><input type="email" id="newUserEmail" placeholder="name@example.com"></div>
+      <div class="field"><label>Temporary password (tell them to change it after signing in, via "Change password" up top)</label><input type="text" id="newUserPass" placeholder="at least 6 characters"></div>
+      <div class="field"><label>Role</label>
+        <select id="newUserRole"><option value="normal">Normal (view only)</option><option value="admin">Admin (full access)</option></select>
+      </div>
+      <button class="btn small" onclick="createNewUser()">Create user</button>
+      <div class="msg ok" id="newUserMsg"></div>
+      <div id="userRows" style="margin-top:16px;"></div>
+      <p class="hint" style="margin-top:8px;">Removing someone here revokes their access to this app, but doesn't delete their Firebase sign-in — if you need that done too, remove their account in the Firebase console (Authentication &gt; Users).</p>
+    </div>
+
+    <div class="card">
+      <h2>Admins (legacy)</h2>
+      <p class="hint">Older way to grant admin access — still works, but for new people use the "Users" card above instead. You must still create their sign-in in the Firebase console (Authentication &gt; Users &gt; Add user) — adding them here just grants them permission once they exist. Up to 20.</p>
       <div id="adminRows"></div>
       <button class="btn ghost small" onclick="addAdminRow()" ${settingsDraftAdmins.length>=20?'disabled':''}>+ add admin email</button>
       <div style="margin-top:12px;"><button class="btn" onclick="saveAdmins()">Save admins</button></div>
@@ -888,14 +923,15 @@ function renderSettings(app){
 
     <div class="card">
       <h2>Page access</h2>
-      <p class="hint">Choose which pages the shared Guns and Beaters logins can see. Admin always sees everything.</p>
+      <p class="hint">Choose which pages the shared Guns and Beaters logins, and Normal users, can see. Admin always sees everything.</p>
       <table>
-        <tr><th>Page</th><th class="num">Guns</th><th class="num">Beaters</th></tr>
+        <tr><th>Page</th><th class="num">Guns</th><th class="num">Beaters</th><th class="num">Users</th></tr>
         ${[['shootdays','Shoot Days'],['totals','Season Totals'],['compare','Compare Seasons'],['sheets','Weekly Sheets']].map(([key,label])=>`
           <tr>
             <td>${label}</td>
             <td class="num"><input type="checkbox" class="tick" id="pageAccess_${key}_guns" ${appSettings.pageAccess?.[key]?.guns!==false?'checked':''}></td>
             <td class="num"><input type="checkbox" class="tick" id="pageAccess_${key}_beaters" ${appSettings.pageAccess?.[key]?.beaters!==false?'checked':''}></td>
+            <td class="num"><input type="checkbox" class="tick" id="pageAccess_${key}_normal" ${appSettings.pageAccess?.[key]?.normal!==false?'checked':''}></td>
           </tr>`).join('')}
       </table>
       <button class="btn small" style="margin-top:12px;" onclick="savePageAccess()">Save page access</button>
@@ -962,7 +998,7 @@ function renderSettings(app){
       <div class="msg err" id="dangerMsg"></div>
     </div>
   `;
-  renderAdminRows(); renderDriveNameRows(); renderSpeciesRows(); renderFormulaRows();
+  renderUserRows(); renderAdminRows(); renderDriveNameRows(); renderSpeciesRows(); renderFormulaRows();
   document.getElementById('formulaSeasonSelect').addEventListener('change', e=>{
     formulaSeasonKey = Number(e.target.value);
     formulaDraft = JSON.parse(JSON.stringify(getSeasonFormula(formulaSeasonKey)));
@@ -1078,13 +1114,68 @@ function savePageAccess(){
   pages.forEach(key=>{
     pageAccess[key] = {
       guns: document.getElementById(`pageAccess_${key}_guns`).checked,
-      beaters: document.getElementById(`pageAccess_${key}_beaters`).checked
+      beaters: document.getElementById(`pageAccess_${key}_beaters`).checked,
+      normal: document.getElementById(`pageAccess_${key}_normal`).checked
     };
   });
   db.collection('settings').doc('config').set({pageAccess},{merge:true}).then(()=>{
     document.getElementById('pageAccessMsg').textContent='Saved.';
     buildNav();
   });
+}
+
+/* ---------------- users (personal admin/normal logins) ---------------- */
+function renderUserRows(){
+  const el = document.getElementById('userRows');
+  if (!el) return;
+  if (!allUsers.length){ el.innerHTML = '<p class="hint">No users added yet.</p>'; return; }
+  el.innerHTML = `
+    <table>
+      <tr><th>Email</th><th>Role</th><th></th></tr>
+      ${allUsers.map(u=>`
+        <tr>
+          <td>${u.email}</td>
+          <td><select onchange="changeUserRole('${u.uid}',this.value)">
+            <option value="normal" ${u.role==='normal'?'selected':''}>Normal</option>
+            <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+          </select></td>
+          <td><button class="remove-x" onclick="removeUser('${u.uid}','${(u.email||'').replace(/'/g,"\\'")}')">&times;</button></td>
+        </tr>`).join('')}
+    </table>`;
+}
+function createNewUser(){
+  const email = document.getElementById('newUserEmail').value.trim();
+  const pass = document.getElementById('newUserPass').value;
+  const role = document.getElementById('newUserRole').value;
+  const msg = document.getElementById('newUserMsg');
+  msg.className = 'msg ok'; msg.textContent = '';
+  if (!email){ msg.className='msg err'; msg.textContent='Enter an email.'; return; }
+  if (!pass || pass.length<6){ msg.className='msg err'; msg.textContent='Password must be at least 6 characters.'; return; }
+
+  // Create the sign-in on a second, throwaway Firebase app instance so it doesn't
+  // sign the admin currently using this page out and replace them with the new user.
+  const secondary = firebase.initializeApp(firebaseConfig, 'secondary_'+Date.now());
+  secondary.auth().createUserWithEmailAndPassword(email, pass)
+    .then(cred=>{
+      const uid = cred.user.uid;
+      return secondary.auth().signOut().then(()=> db.collection('users').doc(uid).set({
+        email, role, createdAt: new Date().toISOString(), createdBy: auth.currentUser ? auth.currentUser.email : null
+      }));
+    })
+    .then(()=>{
+      msg.textContent = `Created. Tell "${email}" their temporary password — they can change it after signing in.`;
+      document.getElementById('newUserEmail').value='';
+      document.getElementById('newUserPass').value='';
+    })
+    .catch(e=>{ msg.className='msg err'; msg.textContent = e.message; })
+    .finally(()=> secondary.delete().catch(()=>{}));
+}
+function changeUserRole(uid,role){
+  db.collection('users').doc(uid).set({role},{merge:true});
+}
+function removeUser(uid,email){
+  if (!confirm(`Remove "${email}"'s access to this app? (Their sign-in itself isn't deleted — do that in the Firebase console if needed too.)`)) return;
+  db.collection('users').doc(uid).delete();
 }
 function renderSpeciesRows(){
   document.getElementById('speciesRows').innerHTML = settingsDraftSpecies.map((sp,i)=>`
