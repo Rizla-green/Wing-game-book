@@ -1,0 +1,1544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<!-- Add to Home Screen support (install from the direct GitHub Pages link, not the Wix-embedded page) -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Gamebook">
+<meta name="theme-color" content="#0e1c18">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Game Book</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,500&family=Inter:wght@400;500;600;700&family=Cinzel:wght@600;900&display=swap" rel="stylesheet">
+
+<!-- ============================================================
+     SETUP — read this before anything else
+     ============================================================
+     FIREBASE (required)
+     1. https://console.firebase.google.com > create a free project.
+     2. Build > Firestore Database > Create database (production mode).
+     3. Build > Authentication > Sign-in method > enable Email/Password.
+        Then in the Users tab, create THREE accounts to start:
+          - your own admin account (any email/password you'll remember)
+          - a shared Guns account, e.g. guns@yourclub.local / a password
+          - a shared Beaters account, e.g. beaters@yourclub.local / a password
+        You can add more admin accounts later the same way.
+     4. Project settings > General > Your apps > "</>" web icon >
+        register an app > copy the firebaseConfig below.
+     5. Firestore > Rules tab, paste and Publish:
+
+        rules_version = '2';
+        service cloud.firestore {
+          match /databases/{database}/documents {
+            match /sheets/{doc} { allow read, write: if request.auth != null; }
+            match /settings/{doc} { allow read, write: if request.auth != null; }
+            match /shootdays/{doc} { allow read, write: if request.auth != null; }
+          }
+        }
+
+        (Everything requires sign-in now — Guns/Beaters/Admin all need
+         one of the three logins above to see anything at all.)
+
+     6. Below, set ADMIN_EMAILS to your own email (a starting list —
+        you can add more admins later from the Settings screen, but you
+        still need to create their Firebase Auth account in step 3 first).
+        Set GUNS_LOGIN_EMAIL / BEATERS_LOGIN_EMAIL to the two shared
+        accounts you created.
+
+     PHOTO PRE-FILL (optional — reads a photo of the paper sheet)
+     Uses OpenRouter's free tier (openrouter.ai) — genuinely free,
+     no credit card needed at all. Sign up at openrouter.ai/keys,
+     create a key, paste it below. Leave blank to hide the
+     photo-upload button. (We originally used Google's Gemini API
+     for this, but Google's new key system was rejecting valid
+     requests as of Sept 2026 — OpenRouter's free tier avoids that
+     problem entirely.)
+
+     WEATHER (automatic, via Open-Meteo — free, no key needed)
+     Set SHOOT_LAT / SHOOT_LON to your shoot's location.
+     ============================================================ -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+  // OpenRouter key is NOT stored here — a key baked into this public file
+  // gets found and auto-revoked by security bots within minutes. Instead,
+  // it's entered once by the admin and saved privately in the browser
+  // (see getOpenRouterKey() below). Leave this as a placeholder.
+  const OPENROUTER_API_KEY_UNUSED = "";
+  const SHOOT_LAT = 51.8974;   // The Old Gym, Cublington Road, Leighton Buzzard LU7 0LB
+  const SHOOT_LON = -0.7499;
+  const GUNS_LOGIN_EMAIL = "guns@wingshoot.com";       // the shared Guns account you created
+  const BEATERS_LOGIN_EMAIL = "beaters@wingshoot.com"; // the shared Beaters account you created
+</script>
+
+<style>
+:root{
+  --ink:#1a2e28; --paper:#12241f; --paper-dim:#0e1c18;
+  --green:#0e1c18; --green-dim:#1a2e28; --rust:#d4af6a; --rust-dim:#b8934f;
+  --brass:#d4af6a; --line:#3d5a4e; --white:#f6efdc;
+}
+*{box-sizing:border-box;}
+body{ margin:0; background:var(--paper); color:var(--ink); font-family:'Inter',sans-serif; font-size:15px; line-height:1.5; }
+h1,h2,h3,.serif{ font-family:'Cinzel',serif; letter-spacing:0.5px; }
+header.top{ background:var(--green); color:var(--white); padding:22px 28px 20px; border-bottom:3px double var(--rust); }
+header.top .titlebar{ display:flex; justify-content:space-between; align-items:baseline; max-width:1050px; margin:0 auto; flex-wrap:wrap; gap:8px; }
+header.top h1{ margin:0; font-size:26px; font-weight:900; color:var(--rust); letter-spacing:2px; }
+header.top .sub{ font-size:13px; color:#a9c2b6; font-style:italic; }
+nav.tabs{ max-width:1050px; margin:0 auto; display:flex; gap:2px; margin-top:16px; border-bottom:1px solid rgba(255,255,255,0.18); flex-wrap:wrap; }
+nav.tabs button{ background:none; border:none; color:#a9c2b6; font-family:'Inter',sans-serif; font-size:14px; font-weight:500; padding:10px 14px; cursor:pointer; border-bottom:3px solid transparent; text-transform:uppercase; letter-spacing:0.5px; font-size:12.5px; }
+nav.tabs button:hover{ color:var(--white); }
+nav.tabs button.active{ color:var(--rust); border-bottom-color:var(--rust); }
+main{ max-width:1050px; margin:0 auto; padding:28px; }
+.card{ background:var(--white); border:1px solid var(--rust-dim); border-radius:0; padding:22px 24px; margin-bottom:20px; position:relative; }
+.card::before{ content:''; position:absolute; top:6px; left:6px; right:6px; bottom:6px; border:1px solid var(--rust-dim); opacity:0.45; pointer-events:none; }
+.card h2{ margin:0 0 10px; font-size:17px; font-weight:600; color:var(--green); text-transform:uppercase; letter-spacing:1px; border-bottom:2px double var(--green); padding-bottom:8px; }
+.card .hint{ color:#7a6f5c; font-size:13px; margin:0 0 18px; }
+.season-row{ display:flex; align-items:center; gap:10px; margin-bottom:22px; flex-wrap:wrap; }
+.season-row select{ font-family:'Inter',sans-serif; font-size:14px; padding:7px 10px; border:1px solid var(--line); border-radius:3px; background:var(--white); color:var(--ink); }
+.season-row .season-label{ font-family:'Cinzel',serif; font-size:15px; font-style:normal; color:var(--rust); letter-spacing:1px; }
+.headline{ display:flex; align-items:baseline; gap:14px; margin-bottom:6px; }
+.headline .num{ font-family:'Cinzel',serif; font-size:52px; font-weight:900; color:var(--rust-dim); line-height:1; }
+.headline .label{ font-size:15px; color:var(--green-dim); padding-bottom:6px; }
+.stat-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:16px; margin-top:18px; }
+.stat{ border-left:3px solid var(--brass); padding-left:12px; }
+.stat .n{ font-family:'Cinzel',serif; font-size:24px; font-weight:700; color:var(--green); }
+.stat .l{ font-size:12.5px; color:#7a6f5c; text-transform:uppercase; letter-spacing:0.5px; }
+table{ width:100%; border-collapse:collapse; margin-top:4px; }
+table th, table td{ padding:7px 10px; border-bottom:1px solid var(--line); text-align:left; font-size:14px; }
+table th{ color:#7a6f5c; font-weight:600; font-size:11px; border-bottom:2px double var(--green); text-transform:uppercase; letter-spacing:0.5px; }
+table td.num, table th.num{ text-align:right; font-variant-numeric:tabular-nums; }
+table tr:last-child td{ border-bottom:none; }
+table tr.total-row td{ font-weight:700; border-top:2px double var(--green); border-bottom:none; }
+.two-col{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+@media (max-width:680px){ .two-col{ grid-template-columns:1fr; } }
+
+/* mobile fixes: stack grids, shrink header, scrollable tables */
+@media (max-width:520px){
+  header.top{ padding:14px 14px 12px; }
+  header.top h1{ font-size:21px; }
+  header.top .sub{ font-size:11px; }
+  nav.tabs{ margin-top:10px; gap:0; }
+  nav.tabs button{ padding:8px 9px; font-size:12.5px; }
+  main{ padding:12px; }
+  .card{ padding:14px 14px; }
+  .headline .num{ font-size:36px; }
+  .stat-grid{ grid-template-columns:1fr 1fr; gap:10px; }
+  .grid2, .grid3, .grid4{ grid-template-columns:1fr !important; gap:4px; }
+  .grid3 button.remove-x, .grid4 button.remove-x{ justify-self:end; margin-top:-4px; }
+  .season-row{ gap:6px; }
+  table{ display:block; overflow-x:auto; white-space:nowrap; }
+  table th, table td{ padding:6px 8px; font-size:13px; }
+  .formula-strip{ font-size:14px; padding:10px 12px; }
+  input[type=text], input[type=number], input[type=date], input[type=password], input[type=email], select{ font-size:16px; } /* prevents iOS auto-zoom on focus */
+}
+.sheet-list-item{ display:flex; justify-content:space-between; align-items:center; padding:13px 0; border-bottom:1px solid var(--paper-dim); cursor:pointer; }
+.sheet-list-item:last-child{ border-bottom:none; }
+.sheet-list-item:hover .sd{ color:var(--rust); }
+.sheet-list-item .sd{ font-family:'Source Serif 4',serif; font-size:17px; font-weight:600; }
+.sheet-list-item .sm{ font-size:13px; color:#7a6f5c; }
+.sheet-list-item .sr{ text-align:right; font-size:13px; color:#7a6f5c; }
+.sheet-list-item .sr b{ color:var(--ink); font-size:15px; }
+.chip{ display:inline-block; font-size:11.5px; padding:2px 10px; border-radius:0; background:transparent; border:1px solid var(--rust); color:var(--rust); margin-left:8px; letter-spacing:0.5px; }
+label{ display:block; font-size:13px; color:#5a5142; margin:0 0 4px; }
+input[type=text], input[type=number], input[type=date], input[type=password], input[type=email], select{
+  width:100%; font-family:'Inter',sans-serif; font-size:14px; padding:8px 10px; border:1px solid var(--line); border-radius:3px; background:var(--white); color:var(--ink);
+}
+.field{ margin-bottom:14px; }
+.grid3{ display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:8px; align-items:end; }
+.grid4{ display:grid; grid-template-columns:2fr 1fr auto auto; gap:8px; align-items:center; }
+.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:end; }
+.person-row{ margin-bottom:8px; }
+button.btn{ font-family:'Inter',sans-serif; font-size:12.5px; font-weight:600; padding:9px 18px; border-radius:0; border:none; cursor:pointer; background:var(--green); color:var(--rust); text-transform:uppercase; letter-spacing:0.5px; }
+button.btn:hover{ background:#0a1512; }
+button.btn.ghost{ background:none; border:1px solid var(--rust-dim); border-radius:0; color:var(--ink); }
+button.btn.ghost:hover{ border-color:var(--rust); color:var(--rust-dim); }
+button.btn.small{ padding:5px 11px; font-size:11px; }
+button.btn.danger{ background:#7a2e26; color:var(--white); }
+button.btn:disabled{ opacity:0.45; cursor:not-allowed; }
+.remove-x{ background:none; border:none; color:#a8836a; font-size:18px; cursor:pointer; padding:0 4px; }
+.section-title{ font-family:'Cinzel',serif; font-size:14px; font-weight:600; margin:22px 0 10px; color:var(--green); text-transform:uppercase; letter-spacing:1px; }
+.section-title:first-child{ margin-top:0; }
+.empty{ text-align:center; padding:40px 20px; color:#8a7f6c; }
+.empty .serif{ font-size:19px; display:block; margin-bottom:6px; color:var(--green-dim); }
+.msg{ font-size:13px; margin-top:8px; }
+.msg.err{ color:#a13a2c; }
+.msg.ok{ color:#3c6b2e; }
+.admin-bar{ display:flex; justify-content:space-between; align-items:center; font-size:13px; color:#cdd6c8; margin-top:2px; }
+.admin-bar span.link{ color:var(--rust); cursor:pointer; text-decoration:none; font-weight:600; }
+.loading{ text-align:center; padding:40px; color:#8a7f6c; font-style:italic; }
+.tick{ width:18px; height:18px; }
+.sweep-winner{ color:var(--rust); font-weight:700; }
+.sweep-winner::after{ content:" 🏆"; font-size:12px; }
+.formula-strip{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-family:'Source Serif 4',serif; font-size:16px; background:var(--paper); color:var(--white); border:1px dashed var(--rust-dim); padding:14px 16px; border-radius:3px; }
+.formula-strip .op{ color:var(--brass); font-weight:700; }
+.formula-strip .eq{ color:var(--rust); font-weight:700; margin-left:6px; }
+
+.day-card{ border:1px solid var(--rust-dim); border-radius:0; padding:12px 14px; margin-bottom:10px; background:var(--paper); }
+.day-card.past{ opacity:0.5; }
+.day-card .day-header{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; flex-wrap:wrap; gap:4px; }
+.day-card .day-name{ font-family:'Cinzel',serif; font-weight:700; font-size:15px; color:var(--rust); }
+.day-card .day-actions{ display:flex; gap:10px; align-items:center; }
+.day-card .day-actions a{ font-size:12.5px; color:var(--rust); text-decoration:none; font-weight:600; }
+.day-card .remove-x{ background:none; border:none; color:#c9a87e; font-size:18px; cursor:pointer; padding:0; line-height:1; }
+.day-card .guest-line{ font-size:14px; color:var(--white); margin:2px 0; }
+.day-card .guest-line b{ color:#a9c2b6; font-weight:600; font-size:12.5px; margin-right:6px; }
+.day-card .field{ margin-bottom:8px; }
+.day-card .field:last-child{ margin-bottom:0; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="titlebar">
+    <div>
+      <h1 id="siteTitle">Wing Shoot Gamebook</h1>
+      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v22</div>
+    </div>
+    <div class="admin-bar"><span id="authStatus">checking…</span></div>
+  </div>
+  <nav class="tabs" id="navTabs"></nav>
+</header>
+
+<main id="app"><div class="loading">Loading the book…</div></main>
+
+<script>
+firebase.initializeApp({
+  apiKey: "AIzaSyA0s3mVFfiVMM7vJCpKM8yaz8dEQ26vAGg",
+  authDomain: "wing-game-book.firebaseapp.com",
+  projectId: "wing-game-book",
+  storageBucket: "wing-game-book.firebasestorage.app",
+  messagingSenderId: "994989712713",
+  appId: "1:994989712713:web:178f22cf7a1617af6be698"
+});
+const db = firebase.firestore();
+db.enablePersistence({ synchronizeTabs: true }).catch(err=>{
+  // Common, harmless reasons this can fail: multiple tabs open (rare on a phone),
+  // or an old/unsupported browser. The app still works, just without offline queuing.
+  console.warn('Offline persistence not enabled:', err.code);
+});
+const auth = firebase.auth();
+
+const DEFAULT_SPECIES = [
+  {name:"Black Pheasant", legs:2, splitSex:false},
+  {name:"Pheasant", legs:2, splitSex:false},
+  {name:"English Partridge", legs:2, splitSex:false},
+  {name:"French Partridge", legs:2, splitSex:false},
+  {name:"Mallard", legs:2, splitSex:false},
+  {name:"Widgeon", legs:2, splitSex:false},
+  {name:"Tufted", legs:2, splitSex:false},
+  {name:"Teal", legs:2, splitSex:false},
+  {name:"Canada Geese", legs:2, splitSex:false},
+  {name:"Brent Geese", legs:2, splitSex:false},
+  {name:"Magpie", legs:2, splitSex:false},
+  {name:"Crow", legs:2, splitSex:false},
+  {name:"Rook", legs:2, splitSex:false},
+  {name:"Jay", legs:2, splitSex:false},
+  {name:"Pigeon", legs:2, splitSex:false},
+  {name:"Rabbit", legs:4, splitSex:false},
+  {name:"Squirrel", legs:4, splitSex:false},
+  {name:"Fox", legs:4, splitSex:false}
+];
+const FORMULA_TERMS = [
+  {key:"shots", label:"Shots (cartridges)"},
+  {key:"animalsShot", label:"Animals shot"},
+  {key:"legs", label:"Legs"},
+  {key:"speciesCount", label:"No. of species"},
+  {key:"sweepSum", label:"Sum of sweep numbers"},
+  {key:"gunsCount", label:"No. of guns"},
+  {key:"beatersCount", label:"No. of beaters"},
+  {key:"guestsCount", label:"No. of guests"}
+];
+
+function getOpenRouterKey(){ return localStorage.getItem('openrouter_key') || ''; }
+function saveOpenRouterKey(val){ localStorage.setItem('openrouter_key', val.trim()); }
+let allSheets = [], allShootDays = [];
+let sheetsLoaded=false, settingsLoaded=false, shootDaysLoaded=false;
+let appSettings = { drivesEnabled:false, driveNames:[], speciesList: DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", paidStatusEnabled:true, excelUploadEnabled:true, pageAccess: {shootdays:{guns:true,beaters:true}, totals:{guns:true,beaters:true}, compare:{guns:true,beaters:true}, sheets:{guns:true,beaters:true}} };
+let authRole = null; // 'admin' | 'gun' | 'beater' | null
+let currentTab = "shootdays";
+let editingId = null;
+
+/* ---------------- season helpers ---------------- */
+function seasonKeyForDate(d){
+  const y=d.getFullYear(), m=d.getMonth();
+  if (m>=8) return y;
+  if (m===0) return y-1;
+  if (m===1 && d.getDate()<=2) return y-1;
+  return null;
+}
+function seasonLabel(startYear){ return startYear + "/" + String(startYear+1).slice(-2); }
+function shotToKillRatio(cartridges, totalShot){ return totalShot>0 ? (cartridges/totalShot).toFixed(1) : '—'; }
+function allSeasonKeys(){
+  const keys = new Set();
+  allSheets.forEach(s=>{ const k=seasonKeyForDate(new Date(s.date)); if(k!==null) keys.add(k); });
+  allShootDays.forEach(s=>{ const k=seasonKeyForDate(new Date(s.date)); if(k!==null) keys.add(k); });
+  const cur = seasonKeyForDate(new Date());
+  if (cur!==null) keys.add(cur);
+  return Array.from(keys).sort((a,b)=>b-a);
+}
+
+/* ---------------- auth ---------------- */
+let lastAuthUser = undefined; // undefined = not yet known
+function computeAuthRole(){
+  const user = lastAuthUser;
+  if (user === undefined) return; // auth hasn't reported yet, don't guess
+  if (!user){ authRole = null; }
+  else if (user.email === GUNS_LOGIN_EMAIL){ authRole = 'gun'; }
+  else if (user.email === BEATERS_LOGIN_EMAIL){ authRole = 'beater'; }
+  else if ((appSettings.adminEmails||[]).includes(user.email)){ authRole = 'admin'; }
+  else { authRole = 'admin_pending'; } // signed in but not on the admin list yet
+  renderAuthBar();
+  buildNav();
+  if (authRole && currentTab==='signin') currentTab='shootdays';
+  if (!authRole) currentTab='signin';
+  render();
+}
+auth.onAuthStateChanged(user=>{
+  lastAuthUser = user;
+  computeAuthRole();
+});
+function renderAuthBar(){
+  const el = document.getElementById('authStatus');
+  if (authRole){
+    const label = authRole==='admin' ? 'Admin' : authRole==='gun' ? 'Guns' : authRole==='beater' ? 'Beaters' : 'Signed in (not yet an admin)';
+    el.innerHTML = `${label} &nbsp;·&nbsp; <span class="link" onclick="doSignOut()">Sign out</span>`;
+  } else {
+    el.textContent = 'Please sign in';
+  }
+}
+function doSignOut(){ auth.signOut(); }
+function canAccessPage(pageKey){
+  if (authRole==='admin') return true;
+  if (authRole!=='gun' && authRole!=='beater') return false;
+  const access = appSettings.pageAccess?.[pageKey];
+  if (!access) return true; // no setting saved yet = default open
+  return access[authRole] !== false;
+}
+function buildNav(){
+  const nav = document.getElementById('navTabs');
+  if (!authRole){ nav.innerHTML=''; return; }
+  const allTabs = [
+    {id:'shootdays', label:'Shoot Days'},
+    {id:'totals', label:'Season Totals'},
+    {id:'compare', label:'Compare Seasons'},
+    {id:'sheets', label:'Weekly Sheets'}
+  ];
+  const tabs = allTabs.filter(t=>canAccessPage(t.id));
+  if (authRole==='admin'){
+    tabs.push({id:'add', label:'Add Sheet'});
+    tabs.push({id:'settings', label:'Settings'});
+  }
+  nav.innerHTML = tabs.map(t=>`<button data-tab="${t.id}" class="${currentTab===t.id?'active':''}">${t.label}</button>`).join('');
+  nav.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=> switchTab(b.dataset.tab)));
+}
+function switchTab(tab){ currentTab = tab; buildNav(); render(); }
+
+/* ---------------- data load ---------------- */
+db.collection('sheets').orderBy('date','desc').onSnapshot(snap=>{
+  allSheets = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  sheetsLoaded = true; render();
+}, ()=>{ sheetsLoaded = true; render(); });
+
+db.collection('shootdays').orderBy('date','asc').onSnapshot(snap=>{
+  allShootDays = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  shootDaysLoaded = true; render();
+}, ()=>{ shootDaysLoaded = true; render(); });
+
+db.collection('settings').doc('config').onSnapshot(doc=>{
+  if (doc.exists) appSettings = { drivesEnabled:false, driveNames:[], speciesList:DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", paidStatusEnabled:true, excelUploadEnabled:true, pageAccess: {shootdays:{guns:true,beaters:true}, totals:{guns:true,beaters:true}, compare:{guns:true,beaters:true}, sheets:{guns:true,beaters:true}}, ...doc.data() };
+  document.getElementById('siteTitle').textContent = appSettings.siteTitle || "Wing Shoot Gamebook";
+  settingsLoaded = true;
+  computeAuthRole(); // the admin list may have just changed, so re-check role
+  render();
+}, ()=>{ settingsLoaded = true; render(); });
+
+/* ---------------- render router ---------------- */
+let selectedSeason = null;
+function render(){
+  const app = document.getElementById('app');
+  if (!sheetsLoaded || !settingsLoaded || !shootDaysLoaded || lastAuthUser===undefined){ app.innerHTML='<div class="loading">Loading the book…</div>'; return; }
+  if (!authRole) return renderSignIn(app);
+  if (authRole==='admin_pending') return renderPending(app);
+  const detailBase = currentTab==='sheet-detail' ? 'sheets' : currentTab;
+  if (authRole!=='admin' && !canAccessPage(detailBase) && currentTab!=='signin'){
+    const allTabs = ['shootdays','totals','compare','sheets'];
+    currentTab = allTabs.find(t=>canAccessPage(t)) || 'shootdays';
+    buildNav();
+  }
+  if (currentTab==='shootdays') return renderShootDays(app);
+  if (currentTab==='totals') return renderTotals(app);
+  if (currentTab==='compare') return renderCompare(app);
+  if (currentTab==='sheets') return renderSheetsList(app);
+  if (currentTab==='sheet-detail') return renderSheetDetail(app);
+  if (currentTab==='add' && authRole==='admin') return renderAddForm(app);
+  if (currentTab==='settings' && authRole==='admin') return renderSettings(app);
+  currentTab='shootdays'; return renderShootDays(app);
+}
+function renderSignIn(app){
+  app.innerHTML = `
+    <div class="card" style="max-width:380px;margin:40px auto;">
+      <h2>Sign in</h2>
+      <p class="hint">Use your admin login, or the shared Guns/Beaters login for your group.</p>
+      <div class="field"><label>Email</label><input type="email" id="siEmail"></div>
+      <div class="field"><label>Password</label><input type="password" id="siPass"></div>
+      <button class="btn" onclick="attemptSignIn()">Sign in</button>
+      <div class="msg err" id="siMsg"></div>
+    </div>`;
+}
+function attemptSignIn(){
+  const email = document.getElementById('siEmail').value.trim();
+  const pass = document.getElementById('siPass').value;
+  auth.signInWithEmailAndPassword(email, pass).catch(e=>{ document.getElementById('siMsg').textContent = e.message; });
+}
+function renderPending(app){
+  app.innerHTML = `<div class="card"><h2>Signed in, but not an admin yet</h2><p class="hint">Your account works, but isn't on the admin list. Ask an existing admin to add "${auth.currentUser.email}" in Settings &gt; Admins.</p><button class="btn ghost" onclick="doSignOut()">Sign out</button></div>`;
+}
+
+/* ================= SHOOT DAYS & GUEST SCHEDULE ================= */
+let shootDayEditIds = new Set();
+function renderShootDays(app){
+  const seasons = allSeasonKeys();
+  if (selectedSeason===null) selectedSeason = seasons[0] ?? null;
+  const rows = allShootDays.filter(d=>seasonKeyForDate(new Date(d.date))===selectedSeason)
+                            .sort((a,b)=> new Date(a.date)-new Date(b.date));
+  const todayStr = new Date().toISOString().slice(0,10);
+  app.innerHTML = `
+    <div class="season-row">
+      <span class="season-label">Season</span>
+      <select id="sdSeasonSelect">${seasons.map(k=>`<option value="${k}" ${k===selectedSeason?'selected':''}>${seasonLabel(k)}</option>`).join('')}</select>
+      ${authRole==='admin' ? `<button class="btn small" onclick="addShootDayRow()">+ add shoot day</button>` : ''}
+    </div>
+    ${authRole==='admin' ? `
+    <div class="card">
+      <h2>Photo pre-fill</h2>
+      <p class="hint">Upload a photo of the season's printed schedule sheet — rows get added automatically, check them against the photo before relying on them.</p>
+      <input type="file" accept="image/*" id="shootDaysPhotoInput" onchange="handleShootDaysPhotoUpload(event)">
+      <div class="msg" id="shootDaysPhotoMsg"></div>
+    </div>` : ''}
+    <div class="card">
+      <h2>Shoot Days &amp; Guest Schedule</h2>
+      <p class="hint">${seasonLabel(selectedSeason)} season.</p>
+      ${authRole==='admin' ? renderShootDayCards(rows, todayStr) : renderShootDayTable(rows)}
+    </div>
+  `;
+  document.getElementById('sdSeasonSelect').addEventListener('change', e=>{ selectedSeason = Number(e.target.value); render(); });
+}
+function renderShootDayTable(rows){
+  return `<table>
+    <tr><th>Day</th><th>Date</th><th>Guest 1</th><th>Guest 2 / Note</th></tr>
+    ${rows.map(d=>{
+      const dt = new Date(d.date);
+      const dayName = dt.toLocaleDateString('en-GB',{weekday:'long'});
+      const dateStr = dt.toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit'});
+      return `<tr><td><b>${dayName}</b></td><td>${dateStr}</td><td>${d.guest1||'—'}</td><td>${d.guest2||'—'}</td></tr>`;
+    }).join('') || `<tr><td colspan="4" style="color:#8a7f6c;">No shoot days set for this season yet.</td></tr>`}
+  </table>`;
+}
+function renderShootDayCards(rows, todayStr){
+  if (!rows.length) return `<p class="hint">No shoot days set for this season yet.</p>`;
+  return rows.map(d=>{
+    const dt = new Date(d.date);
+    const dayName = dt.toLocaleDateString('en-GB',{weekday:'long'});
+    const dateStr = dt.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+    const isPast = d.date < todayStr;
+    const isEditing = shootDayEditIds.has(d.id);
+    if (isEditing){
+      return `<div class="day-card">
+        <div class="day-header">
+          <span class="day-name">${dayName} — editing</span>
+          <div class="day-actions"><a href="#" onclick="toggleShootDayEdit('${d.id}');return false;">Done</a><button class="remove-x" onclick="deleteShootDay('${d.id}')">&times;</button></div>
+        </div>
+        <div class="field"><label>Date</label><input type="date" value="${d.date}" onchange="updateShootDay('${d.id}','date',this.value)"></div>
+        <div class="field"><label>Guest 1</label><input type="text" value="${d.guest1||''}" onchange="updateShootDay('${d.id}','guest1',this.value)"></div>
+        <div class="field"><label>Guest 2 / Note</label><input type="text" value="${d.guest2||''}" onchange="updateShootDay('${d.id}','guest2',this.value)"></div>
+      </div>`;
+    }
+    return `<div class="day-card${isPast?' past':''}">
+      <div class="day-header">
+        <span class="day-name">${dayName}, ${dateStr}</span>
+        <div class="day-actions"><a href="#" onclick="toggleShootDayEdit('${d.id}');return false;">Edit</a><button class="remove-x" onclick="deleteShootDay('${d.id}')">&times;</button></div>
+      </div>
+      <div class="guest-line"><b>GUEST 1</b>${d.guest1||'—'}</div>
+      <div class="guest-line"><b>GUEST 2</b>${d.guest2||'—'}</div>
+    </div>`;
+  }).join('');
+}
+function toggleShootDayEdit(id){
+  if (shootDayEditIds.has(id)) shootDayEditIds.delete(id); else shootDayEditIds.add(id);
+  render();
+}
+function addShootDayRow(){
+  const today = new Date();
+  db.collection('shootdays').add({ date: today.toISOString().slice(0,10), guest1:'', guest2:'' });
+}
+function handleShootDaysPhotoUpload(evt){
+  const file = evt.target.files[0]; if(!file) return;
+  const msg = document.getElementById('shootDaysPhotoMsg');
+  const orKey = getOpenRouterKey();
+  if (!orKey){
+    msg.className='msg err';
+    msg.textContent = 'No photo-reading key set up yet — go to Settings to add your free OpenRouter key.';
+    evt.target.value = '';
+    return;
+  }
+  uploadCancelRequested = false;
+  msg.className='msg';
+  msg.innerHTML = 'Reading the schedule… <button class="btn ghost small" onclick="cancelPhotoUpload(\'shootDaysPhotoMsg\')" style="margin-left:8px;">Cancel</button>';
+
+  compressImage(file, 1600, 0.82).then(base64 => {
+    if (uploadCancelRequested) return;
+    const prompt = `You are reading a printed "Shoot Days & Guest Schedule" sheet for a wing shoot season. It has a table with columns: Day (name of weekday), Date, Guest 1, Guest 2 / Note. Return ONLY valid JSON, no markdown, no commentary, in exactly this shape:
+{"rows":[{"date":"YYYY-MM-DD","guest1":"","guest2":""}]}
+Convert each date shown (which may be in DD.MM.YY format) into YYYY-MM-DD format. If a Guest 1 or Guest 2 cell is blank or shows a dash, leave it as an empty string. Include every row from the table. Respond with the JSON object only — no other text, notes, or explanation before or after it.`;
+    const controller = new AbortController();
+    activeUploadController = controller;
+    fetchWithTimeout(`https://openrouter.ai/api/v1/chat/completions`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
+      body: JSON.stringify({
+        model: 'openrouter/free',
+        messages: [{
+          role: 'user',
+          content: [
+            {type:'text', text: prompt},
+            {type:'image_url', image_url:{url: `data:image/jpeg;base64,${base64}`}}
+          ]
+        }]
+      })
+    }, 45000, controller).then(r=>r.json()).then(data=>{
+      if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
+      if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
+      const text = data.choices[0].message.content;
+      const parsed = extractJson(text);
+      const rows = parsed.rows || [];
+      if (!rows.length){ throw new Error('No rows found in that photo'); }
+      let added = 0;
+      const batchPromises = rows.filter(r=>r.date).map(r=>
+        db.collection('shootdays').add({ date: r.date, guest1: r.guest1||'', guest2: r.guest2||'' }).then(()=>{ added++; })
+      );
+      Promise.all(batchPromises).then(()=>{
+        msg.className='msg ok'; msg.textContent=`Added ${added} shoot day(s) — check every row against the photo below, dates and guest names can be edited any time.`;
+      });
+    }).catch(err=>{
+      if (uploadCancelRequested) return; // already showing "Cancelled."
+      const isTimeout = err.name === 'AbortError';
+      msg.className='msg err';
+      msg.textContent = isTimeout ? "The photo-reading service didn't respond in time (45s) — the free model may be overloaded right now. Try again in a minute, or fill this in by hand." : "Couldn't read that photo: " + err.message;
+    });
+  }).catch(err=>{
+    if (uploadCancelRequested) return;
+    msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message;
+  });
+}
+function updateShootDay(id, field, val){
+  db.collection('shootdays').doc(id).update({[field]: val});
+}
+function deleteShootDay(id){
+  if (!confirm('Remove this shoot day?')) return;
+  db.collection('shootdays').doc(id).delete();
+}
+
+/* ================= grand total formula engine ================= */
+function computeSheetFacts(payload){
+  const guns=payload.guns||[], beaters=payload.beaters||[], guests=payload.guests||[];
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  let animalsShot=0, legs=0;
+  Object.entries(payload.game||{}).forEach(([key,count])=>{
+    const baseName = key.replace(/ \((M|F)\)$/,'');
+    const sp = speciesList.find(s=>s.name===baseName);
+    animalsShot += Number(count||0);
+    legs += Number(count||0) * (sp ? sp.legs : 2);
+  });
+  const speciesCount = new Set(Object.keys(payload.game||{}).map(k=>k.replace(/ \((M|F)\)$/,''))).size;
+  const sweepSum = [...guns,...beaters,...guests].reduce((a,p)=>a+Number(p.sweep||0),0);
+  return {
+    shots: Number(payload.cartridges||0),
+    animalsShot, legs, speciesCount, sweepSum,
+    gunsCount: guns.length, beatersCount: beaters.length, guestsCount: guests.length
+  };
+}
+function getSeasonFormula(seasonKey){
+  const f = (appSettings.seasonFormulas||{})[seasonKey];
+  if (f && f.length) return f;
+  return [{term:'shots',op:null},{term:'legs',op:'+'}]; // sensible fallback default
+}
+function evalFormula(formula, facts){
+  let result = null;
+  formula.forEach(step=>{
+    const val = facts[step.term] || 0;
+    if (result===null){ result = val; return; }
+    if (step.op==='+') result += val;
+    else if (step.op==='-') result -= val;
+    else if (step.op==='×') result *= val;
+    else if (step.op==='÷') result = val ? result/val : result;
+  });
+  return result||0;
+}
+function formulaTermLabel(key){ return (FORMULA_TERMS.find(t=>t.key===key)||{}).label || key; }
+function formulaBreakdownHTML(formula, facts, total){
+  const parts = formula.map((step,i)=>{
+    const val = facts[step.term]||0;
+    const opHtml = step.op ? `<span class="op">${step.op}</span>` : '';
+    return `${opHtml}${formulaTermLabel(step.term)} (${val})`;
+  });
+  return `<div class="formula-strip">${parts.join(' ')} <span class="eq">= ${total}</span></div>`;
+}
+
+/* ================= SEASON TOTALS ================= */
+function renderTotals(app){
+  const seasons = allSeasonKeys();
+  if (selectedSeason===null) selectedSeason = seasons[0] ?? null;
+  if (seasons.length===0){
+    app.innerHTML = `<div class="card"><div class="empty"><span class="serif">No sheets yet</span>The book's empty — add this week's sheet to get started.</div></div>`;
+    return;
+  }
+  const seasonSheets = allSheets.filter(s=>seasonKeyForDate(new Date(s.date))===selectedSeason);
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  const speciesTotals = {}; speciesList.forEach(sp=>speciesTotals[sp.name]=0);
+  let totalShot=0, grandTotal=0, cartridges=0;
+  const attendance = {}; // name -> role
+  seasonSheets.forEach(s=>{
+    Object.entries(s.game||{}).forEach(([key,count])=>{
+      const base = key.replace(/ \((M|F)\)$/,'');
+      speciesTotals[base] = (speciesTotals[base]||0) + Number(count||0);
+    });
+    totalShot += Number(s.totalShot||0);
+    grandTotal += Number(s.grandTotal||0);
+    cartridges += Number(s.cartridges||0);
+    (s.guns||[]).forEach(p=>addAtt(p.name,'Gun'));
+    (s.beaters||[]).forEach(p=>addAtt(p.name,'Beater'));
+    (s.guests||[]).forEach(p=>addAtt(p.name,'Guest'));
+  });
+  function addAtt(name,role){ if(!name)return; attendance[name]=role; }
+  const speciesRows = Object.entries(speciesTotals).filter(([,c])=>c>0);
+  const roleOrder = {Gun:0, Beater:1, Guest:2};
+  const attRows = Object.entries(attendance).sort((a,b)=> (roleOrder[a[1]]-roleOrder[b[1]]) || a[0].localeCompare(b[0]));
+
+  app.innerHTML = `
+    <div class="season-row">
+      <span class="season-label">Season</span>
+      <select id="seasonSelect">${seasons.map(k=>`<option value="${k}" ${k===selectedSeason?'selected':''}>${seasonLabel(k)}</option>`).join('')}</select>
+      <span class="chip">${seasonSheets.length} sheet${seasonSheets.length===1?'':'s'} logged</span>
+    </div>
+    <div class="card">
+      <div class="stat-grid">
+        <div class="stat"><div class="n">${totalShot}</div><div class="l">total shot</div></div>
+        <div class="stat"><div class="n">${cartridges}</div><div class="l">cartridges</div></div>
+        <div class="stat"><div class="n">${shotToKillRatio(cartridges,totalShot)}</div><div class="l">shots per kill</div></div>
+        <div class="stat"><div class="n">${speciesRows.length}</div><div class="l">species taken</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>By species</h2>
+      <table><tr><th>Species</th><th class="num">Count</th></tr>
+      ${speciesRows.map(([sp,c])=>`<tr><td>${sp}</td><td class="num">${c}</td></tr>`).join('') || '<tr><td colspan="2" style="color:#8a7f6c;">Nothing logged yet.</td></tr>'}
+      <tr class="total-row"><td>Total</td><td class="num">${speciesRows.reduce((a,r)=>a+r[1],0)}</td></tr>
+      </table>
+    </div>
+  `;
+  document.getElementById('seasonSelect').addEventListener('change', e=>{ selectedSeason=Number(e.target.value); render(); });
+}
+
+/* ================= COMPARE SEASONS ================= */
+let compareSelected=new Set(), compareCutoffOn=false, compareCutoffDate=null;
+function aggregateSeason(seasonKey, cutoffMonthDay){
+  const sheets = allSheets.filter(s=>{
+    if (seasonKeyForDate(new Date(s.date))!==seasonKey) return false;
+    if (cutoffMonthDay){
+      const d = new Date(s.date);
+      const cutoffYear = cutoffMonthDay.month<=1 ? seasonKey+1 : seasonKey;
+      const cutoffDate = new Date(cutoffYear, cutoffMonthDay.month, cutoffMonthDay.day, 23,59,59);
+      if (d>cutoffDate) return false;
+    }
+    return true;
+  });
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  const speciesTotals={}; speciesList.forEach(sp=>speciesTotals[sp.name]=0);
+  const attendance={};
+  let totalShot=0, grandTotal=0, cartridges=0;
+  sheets.forEach(s=>{
+    Object.entries(s.game||{}).forEach(([key,count])=>{
+      const base=key.replace(/ \((M|F)\)$/,'');
+      speciesTotals[base]=(speciesTotals[base]||0)+Number(count||0);
+    });
+    totalShot+=Number(s.totalShot||0); grandTotal+=Number(s.grandTotal||0); cartridges+=Number(s.cartridges||0);
+    (s.guns||[]).forEach(p=>addAtt(p.name,'Gun'));
+    (s.beaters||[]).forEach(p=>addAtt(p.name,'Beater'));
+    (s.guests||[]).forEach(p=>addAtt(p.name,'Guest'));
+  });
+  function addAtt(name,role){ if(!name)return; attendance[name]=role; }
+  const speciesCount = Object.values(speciesTotals).filter(v=>v>0).length;
+  return { sheets, speciesTotals, speciesCount, attendance, totalShot, grandTotal, cartridges };
+}
+function renderCompare(app){
+  const seasons = allSeasonKeys();
+  if (seasons.length<2){
+    app.innerHTML = `<div class="card"><div class="empty"><span class="serif">Not enough seasons yet</span>Compare will be useful once you've got two or more seasons logged.</div></div>`;
+    return;
+  }
+  if (compareSelected.size===0) compareSelected = new Set(seasons.slice(0,2));
+  if (!compareCutoffDate){ const t=new Date(); compareCutoffDate={month:t.getMonth(), day:t.getDate()}; }
+
+  app.innerHTML = `
+    <div class="card">
+      <h2>Compare seasons</h2>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
+        ${seasons.map(k=>`<label style="display:flex;align-items:center;gap:6px;font-size:14px;">
+          <input type="checkbox" ${compareSelected.has(k)?'checked':''} onchange="toggleCompareSeason(${k}, this.checked)"> ${seasonLabel(k)}</label>`).join('')}
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
+          <input type="checkbox" ${compareCutoffOn?'checked':''} onchange="toggleCutoff(this.checked)"> Only count sheets up to</label>
+        <select id="cutoffDaySelect" onchange="setCutoffDay(this.value)" ${compareCutoffOn?'':'disabled'} style="width:auto;">
+          ${Array.from({length:31},(_,i)=>i+1).map(d=>`<option value="${d}" ${d===compareCutoffDate.day?'selected':''}>${d}</option>`).join('')}
+        </select>
+        <select id="cutoffMonthSelect" onchange="setCutoffMonth(this.value)" ${compareCutoffOn?'':'disabled'} style="width:auto;">
+          ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m,i)=>`<option value="${i}" ${i===compareCutoffDate.month?'selected':''}>${m}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div id="compareResultsBox"></div>
+  `;
+  renderCompareResultsBox();
+}
+function renderCompareResultsBox(){
+  const seasons = allSeasonKeys();
+  const selected = seasons.filter(k=>compareSelected.has(k));
+  const cutoff = compareCutoffOn ? compareCutoffDate : null;
+  const results = selected.map(k=>({key:k, agg: aggregateSeason(k, cutoff)}));
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  document.getElementById('compareResultsBox').innerHTML = `
+    <div class="card" style="overflow-x:auto;">
+      <h2>Headline totals</h2>
+      <table><tr><th>Season</th><th class="num">Total shot</th><th class="num">Cartridges</th><th class="num">Shots per kill</th><th class="num">Species</th><th class="num">Sheets</th></tr>
+      ${results.map(r=>`<tr><td>${seasonLabel(r.key)}</td><td class="num">${r.agg.totalShot}</td><td class="num">${r.agg.cartridges}</td><td class="num">${shotToKillRatio(r.agg.cartridges,r.agg.totalShot)}</td><td class="num">${r.agg.speciesCount}</td><td class="num">${r.agg.sheets.length}</td></tr>`).join('')}
+      </table>
+    </div>
+    <div class="card" style="overflow-x:auto;">
+      <h2>By species</h2>
+      <table><tr><th>Species</th>${results.map(r=>`<th class="num">${seasonLabel(r.key)}</th>`).join('')}</tr>
+      ${speciesList.filter(sp=>results.some(r=>r.agg.speciesTotals[sp.name]>0)).map(sp=>`<tr><td>${sp.name}</td>${results.map(r=>`<td class="num">${r.agg.speciesTotals[sp.name]||0}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${results.length+1}">Nothing logged yet.</td></tr>`}
+      </table>
+    </div>
+  `;
+}
+function toggleCompareSeason(key,checked){ if(checked) compareSelected.add(key); else compareSelected.delete(key); renderCompareResultsBox(); }
+function toggleCutoff(checked){
+  compareCutoffOn=checked;
+  const d = document.getElementById('cutoffDaySelect'), m = document.getElementById('cutoffMonthSelect');
+  if (d) d.disabled = !checked;
+  if (m) m.disabled = !checked;
+  renderCompareResultsBox();
+}
+function setCutoffDay(val){ compareCutoffDate.day = Number(val); renderCompareResultsBox(); }
+function setCutoffMonth(val){ compareCutoffDate.month = Number(val); renderCompareResultsBox(); }
+
+/* ================= WEEKLY SHEETS LIST + DETAIL ================= */
+let sheetsListSeason = null;
+function renderSheetsList(app){
+  if (allSheets.length===0){
+    app.innerHTML = `<div class="card"><div class="empty"><span class="serif">No sheets yet</span>Weekly sheets will appear here once added.</div></div>`;
+    return;
+  }
+  const seasons = allSeasonKeys();
+  if (sheetsListSeason===null) sheetsListSeason = seasons[0] ?? null;
+  const filtered = allSheets.filter(s=>seasonKeyForDate(new Date(s.date))===sheetsListSeason);
+  app.innerHTML = `
+    <div class="season-row">
+      <span class="season-label">Season</span>
+      <select id="sheetsListSeasonSelect">${seasons.map(k=>`<option value="${k}" ${k===sheetsListSeason?'selected':''}>${seasonLabel(k)}</option>`).join('')}</select>
+    </div>
+    <div class="card">
+      <h2>Weekly sheets</h2>
+      <p class="hint">${seasonLabel(sheetsListSeason)} season, most recent first.</p>
+      ${filtered.map(s=>{
+        const gunsCount=(s.guns||[]).length, beatersCount=(s.beaters||[]).length, guestsCount=(s.guests||[]).length;
+        return `<div class="sheet-list-item" onclick="openSheet('${s.id}')">
+          <div><div class="sd">${formatDate(s.date)}</div>
+          <div class="sm">${gunsCount} guns · ${beatersCount} beaters${guestsCount?` · ${guestsCount} guests`:''}</div></div>
+          <div class="sr">Grand total<br><b>${(s.grandTotal||0).toLocaleString()}</b></div>
+        </div>`;
+      }).join('') || '<p class="hint">No sheets logged for this season yet.</p>'}
+    </div>`;
+  document.getElementById('sheetsListSeasonSelect').addEventListener('change', e=>{ sheetsListSeason=Number(e.target.value); render(); });
+}
+function formatDate(iso){ return new Date(iso).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}); }
+function openSheet(id){ editingId=id; currentTab='sheet-detail'; render(); }
+
+function sweepWinners(s){
+  const all = [...(s.guns||[]), ...(s.beaters||[]), ...(s.guests||[])];
+  const withGuess = all.filter(p=>p.sweep!==''&&p.sweep!=null&&!isNaN(Number(p.sweep)));
+  if (!withGuess.length) return new Set();
+  let best = Infinity;
+  withGuess.forEach(p=>{ const d=Math.abs(Number(p.sweep)-Number(s.grandTotal||0)); if(d<best) best=d; });
+  return new Set(withGuess.filter(p=>Math.abs(Number(p.sweep)-Number(s.grandTotal||0))===best).map(p=>p.name));
+}
+function renderSheetDetail(app){
+  const s = allSheets.find(x=>x.id===editingId);
+  if (!s){ switchTab('sheets'); return; }
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  const speciesRows = Object.entries(s.game||{}).filter(([,c])=>c>0);
+  const facts = s.factsUsed || computeSheetFacts(s);
+  const formula = s.formulaUsed || getSeasonFormula(seasonKeyForDate(new Date(s.date)));
+  const winners = sweepWinners(s);
+  const rowClass = name => winners.has(name) ? 'sweep-winner' : '';
+
+  app.innerHTML = `
+    <div class="card">
+      <span class="link" style="cursor:pointer;color:var(--rust);font-size:13px;" onclick="switchTab('sheets')">&larr; back to weekly sheets</span>
+      <h2 style="margin-top:10px;">${formatDate(s.date)}</h2>
+      ${s.weather ? `<p class="hint" style="margin-top:6px;">${s.weather.summary} · ${s.weather.tempMax}°C / ${s.weather.tempMin}°C · wind ${s.weather.windMax} mph ${s.weather.windDir||''}</p>` : ''}
+      ${authRole==='admin' ? `<button class="btn ghost small" style="margin-top:6px;" onclick="editSheet('${s.id}')">Edit this sheet</button>
+        <button class="btn danger small" style="margin-top:6px;" onclick="deleteSheet('${s.id}')">Delete</button>` : ''}
+    </div>
+
+    ${(s.drives && s.drives.length) ? `<div class="card"><h2>Drives</h2><table><tr><th>Drive</th><th>Species</th><th class="num">Shots</th></tr>
+      ${s.drives.map(d=>`<tr><td>${d.name}</td><td>${d.species}</td><td class="num">${d.shots}</td></tr>`).join('')}</table></div>` : ''}
+
+    ${winners.size ? `<p class="hint" style="margin:18px 0 12px;color:var(--rust);">🏆 highlighted in red = closest sweep guess to the grand total (${(s.grandTotal||0).toLocaleString()}).</p>` : ''}
+    <div class="two-col">
+      <div class="card"><h2>Guns</h2><table><tr><th>Name</th><th class="num">Sweep</th>${appSettings.paidStatusEnabled?'<th class="num">Have paid</th>':''}</tr>
+        ${(s.guns||[]).map(p=>`<tr class="${rowClass(p.name)}"><td>${p.name}</td><td class="num">${p.sweep||''}</td>${appSettings.paidStatusEnabled?`<td class="num">${p.havePaid?'✓':''}</td>`:''}</tr>`).join('')}</table></div>
+      <div class="card"><h2>Beaters</h2><table><tr><th>Name</th><th class="num">Sweep</th>${appSettings.paidStatusEnabled?'<th class="num">Been paid</th>':''}</tr>
+        ${(s.beaters||[]).map(p=>`<tr class="${rowClass(p.name)}"><td>${p.name}</td><td class="num">${p.sweep||''}</td>${appSettings.paidStatusEnabled?`<td class="num">${p.beenPaid?'✓':''}</td>`:''}</tr>`).join('')}</table></div>
+    </div>
+    ${(s.guests && s.guests.length) ? `<div class="card"><h2>Guests</h2><table><tr><th>Name</th><th class="num">Sweep</th></tr>
+      ${s.guests.map(p=>`<tr class="${rowClass(p.name)}"><td>${p.name}</td><td class="num">${p.sweep||''}</td></tr>`).join('')}</table></div>` : ''}
+
+    <div class="two-col">
+      <div class="card"><h2>Game shot</h2><table><tr><th>Species</th><th class="num">No.</th></tr>
+        ${speciesRows.map(([sp,c])=>`<tr><td>${sp}</td><td class="num">${c}</td></tr>`).join('') || '<tr><td colspan="2" style="color:#8a7f6c;">Nothing shot this week.</td></tr>'}</table></div>
+      <div class="card"><h2>This week's totals</h2><table>
+        <tr><td>Total shot</td><td class="num">${s.totalShot||0}</td></tr>
+        <tr><td>Cartridges</td><td class="num">${s.cartridges||0}</td></tr>
+        <tr><td>Shots per kill</td><td class="num">${shotToKillRatio(s.cartridges||0, s.totalShot||0)}</td></tr>
+        <tr class="total-row"><td>Grand total</td><td class="num">${(s.grandTotal||0).toLocaleString()}</td></tr>
+      </table></div>
+    </div>
+    <div class="card"><h2>How the grand total is made up</h2>${formulaBreakdownHTML(formula, facts, s.grandTotal||0)}</div>
+    ${s.notes ? `<div class="card"><h2>Notes</h2><p style="margin:0;">${s.notes}</p></div>` : ''}
+  `;
+}
+function deleteSheet(id){
+  if (!confirm('Delete this sheet permanently?')) return;
+  db.collection('sheets').doc(id).delete().then(()=> switchTab('sheets'));
+}
+function editSheet(id){ editingId=id; currentTab='add'; render(); }
+
+/* ================= SETTINGS (admin only) ================= */
+let settingsDraftNames=null, settingsDraftSpecies=null, settingsDraftAdmins=null, formulaDraft=null, formulaSeasonKey=null;
+function renderSettings(app){
+  if (settingsDraftNames===null) settingsDraftNames=[...(appSettings.driveNames||[])];
+  if (settingsDraftSpecies===null) settingsDraftSpecies = JSON.parse(JSON.stringify(appSettings.speciesList||DEFAULT_SPECIES));
+  if (settingsDraftAdmins===null) settingsDraftAdmins=[...(appSettings.adminEmails||[])];
+  const seasons = allSeasonKeys();
+  if (formulaSeasonKey===null) formulaSeasonKey = seasons[0] ?? seasonKeyForDate(new Date());
+  if (formulaDraft===null) formulaDraft = JSON.parse(JSON.stringify(getSeasonFormula(formulaSeasonKey)));
+
+  app.innerHTML = `
+    <div class="card">
+      <h2>Photo pre-fill (this device)</h2>
+      <p class="hint">A free key from openrouter.ai/keys, used to read photos of sheets and schedules. Saved privately on this device only — not stored in the app's code, so it never ends up on GitHub. You'll need to enter it again if you use a different phone or browser.</p>
+      <div class="field"><label>OpenRouter API key</label><input type="text" id="orKeyInput" value="${getOpenRouterKey()}" placeholder="sk-or-v1-..."></div>
+      <button class="btn small" onclick="saveOrKeyFromSettings()">Save</button>
+      <div class="msg ok" id="orKeyMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Site title</h2>
+      <div class="field"><label>Shown at the top of every page</label><input type="text" id="siteTitleInput" value="${appSettings.siteTitle||'Wing Shoot Gamebook'}"></div>
+      <button class="btn small" onclick="saveSiteTitle()">Save</button>
+      <div class="msg ok" id="titleMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Admins</h2>
+      <p class="hint">Full access — sheets, settings, everything. You must still create their sign-in in the Firebase console (Authentication &gt; Users &gt; Add user) — adding them here just grants them permission once they exist. Up to 20.</p>
+      <div id="adminRows"></div>
+      <button class="btn ghost small" onclick="addAdminRow()" ${settingsDraftAdmins.length>=20?'disabled':''}>+ add admin email</button>
+      <div style="margin-top:12px;"><button class="btn" onclick="saveAdmins()">Save admins</button></div>
+      <div class="msg ok" id="adminMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Paid status</h2>
+      <p class="hint">When on, Guns get a "Have paid" tick and Beaters get a "Been paid" tick on each sheet. Turn off to hide these entirely — existing ticks aren't deleted, just hidden.</p>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
+        <input type="checkbox" id="paidToggle" ${appSettings.paidStatusEnabled?'checked':''}> Track have-paid / been-paid</label>
+      <button class="btn small" style="margin-top:12px;" onclick="savePaidToggle()">Save</button>
+      <div class="msg ok" id="paidToggleMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Excel upload</h2>
+      <p class="hint">When on, Add Sheet shows an option to upload a converted spreadsheet as well as a photo. Turn off to show the photo upload only.</p>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
+        <input type="checkbox" id="excelToggle" ${appSettings.excelUploadEnabled?'checked':''}> Show Excel upload on Add Sheet</label>
+      <button class="btn small" style="margin-top:12px;" onclick="saveExcelToggle()">Save</button>
+      <div class="msg ok" id="excelToggleMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Page access</h2>
+      <p class="hint">Choose which pages the shared Guns and Beaters logins can see. Admin always sees everything.</p>
+      <table>
+        <tr><th>Page</th><th class="num">Guns</th><th class="num">Beaters</th></tr>
+        ${[['shootdays','Shoot Days'],['totals','Season Totals'],['compare','Compare Seasons'],['sheets','Weekly Sheets']].map(([key,label])=>`
+          <tr>
+            <td>${label}</td>
+            <td class="num"><input type="checkbox" class="tick" id="pageAccess_${key}_guns" ${appSettings.pageAccess?.[key]?.guns!==false?'checked':''}></td>
+            <td class="num"><input type="checkbox" class="tick" id="pageAccess_${key}_beaters" ${appSettings.pageAccess?.[key]?.beaters!==false?'checked':''}></td>
+          </tr>`).join('')}
+      </table>
+      <button class="btn small" style="margin-top:12px;" onclick="savePageAccess()">Save page access</button>
+      <div class="msg ok" id="pageAccessMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Drives</h2>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
+        <input type="checkbox" id="drivesToggle" ${appSettings.drivesEnabled?'checked':''}> Track drives on each sheet</label>
+      <button class="btn small" style="margin-top:12px;" onclick="saveDrivesToggle()">Save</button>
+      <div class="msg ok" id="toggleMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Drive names</h2>
+      <div id="driveNamesRows"></div>
+      <button class="btn ghost small" onclick="addDriveNameRow()" ${settingsDraftNames.length>=10?'disabled':''}>+ add drive name</button>
+      <div style="margin-top:14px;"><button class="btn" onclick="saveDriveNames()">Save drive names</button></div>
+      <div class="msg ok" id="namesMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Species</h2>
+      <p class="hint">Legs: 2 for birds, 4 for ground game (rabbit, squirrel, fox). "Split M/F" adds separate male/female fields on the weekly sheet for that species.</p>
+      <div id="speciesRows"></div>
+      <button class="btn ghost small" onclick="addSpeciesRow()">+ add species</button>
+      <div style="margin-top:14px;"><button class="btn" onclick="saveSpecies()">Save species list</button></div>
+      <div class="msg ok" id="speciesMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Grand total formula</h2>
+      <p class="hint">Set once per season — every sheet in that season uses it. Past seasons keep whatever formula they were saved with.</p>
+      <div class="field"><label>Season</label>
+        <select id="formulaSeasonSelect">${seasons.map(k=>`<option value="${k}" ${k===formulaSeasonKey?'selected':''}>${seasonLabel(k)}</option>`).join('')}</select>
+      </div>
+      <div id="formulaRows"></div>
+      <button class="btn ghost small" onclick="addFormulaTerm()" ${formulaDraft.length>=6?'disabled':''}>+ add term</button>
+      <div style="margin-top:14px;"><button class="btn" onclick="saveFormula()">Save formula for this season</button></div>
+      <div class="msg ok" id="formulaMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Download</h2>
+      <p class="hint">Downloads one season as an Excel spreadsheet — leftmost column is the season's totals, then one column per shoot date, left to right in date order.</p>
+      <div class="field"><label>Season</label>
+        <select id="downloadSeasonSelect">${seasons.map(k=>`<option value="${k}">${seasonLabel(k)}</option>`).join('')}</select>
+      </div>
+      <button class="btn small" onclick="downloadSeasonExcel()">Download season as Excel</button>
+      <div class="msg err" id="downloadMsg"></div>
+    </div>
+
+    <div class="card" style="border-color:#a13a2c;">
+      <h2 style="color:#a13a2c;">Danger zone</h2>
+      <p class="hint">Permanently deletes data — this cannot be undone.</p>
+      <div class="section-title">Delete a single weekly sheet</div>
+      <p class="hint">Easiest done from that sheet's own page (open it under Weekly Sheets, then Delete) — every sheet has a delete button there.</p>
+      <div class="section-title">Delete a season's shoot dates</div>
+      <p class="hint">Clears every row from the Shoot Days &amp; Guest Schedule for one season (guns/beaters/weekly sheets aren't affected).</p>
+      <div class="field"><label>Season</label>
+        <select id="dangerSeasonSelect">${seasons.map(k=>`<option value="${k}">${seasonLabel(k)}</option>`).join('')}</select>
+      </div>
+      <button class="btn danger small" onclick="deleteSeasonShootDays()">Delete all shoot dates in this season</button>
+      <div class="msg err" id="dangerMsg"></div>
+    </div>
+  `;
+  renderAdminRows(); renderDriveNameRows(); renderSpeciesRows(); renderFormulaRows();
+  document.getElementById('formulaSeasonSelect').addEventListener('change', e=>{
+    formulaSeasonKey = Number(e.target.value);
+    formulaDraft = JSON.parse(JSON.stringify(getSeasonFormula(formulaSeasonKey)));
+    renderFormulaRows();
+  });
+}
+function downloadSeasonExcel(){
+  const seasonKey = Number(document.getElementById('downloadSeasonSelect').value);
+  const msg = document.getElementById('downloadMsg');
+  const seasonSheets = allSheets.filter(s=>seasonKeyForDate(new Date(s.date))===seasonKey)
+                                 .sort((a,b)=> new Date(a.date)-new Date(b.date));
+  if (!seasonSheets.length){ msg.className='msg err'; msg.textContent='No sheets in that season to export.'; return; }
+  if (typeof XLSX === 'undefined'){ msg.className='msg err'; msg.textContent='Excel library failed to load — check your internet connection and try again.'; return; }
+
+  // union of every game key (species, incl. M/F splits) used anywhere in the season, in a stable order
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  const knownOrder = [];
+  speciesList.forEach(sp=>{
+    if (sp.splitSex){ knownOrder.push(sp.name+' (M)'); knownOrder.push(sp.name+' (F)'); }
+    else { knownOrder.push(sp.name); }
+  });
+  const usedKeys = new Set();
+  seasonSheets.forEach(s=> Object.keys(s.game||{}).forEach(k=>usedKeys.add(k)));
+  const gameKeys = knownOrder.filter(k=>usedKeys.has(k));
+  usedKeys.forEach(k=>{ if(!gameKeys.includes(k)) gameKeys.push(k); }); // catch anything not in the known list
+
+  const dateHeaders = seasonSheets.map(s=> new Date(s.date).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'}));
+  const aoa = [];
+  aoa.push(['', 'Totals', ...dateHeaders]);
+
+  gameKeys.forEach(key=>{
+    const seasonTotal = seasonSheets.reduce((a,s)=> a + Number((s.game||{})[key]||0), 0);
+    const perSheet = seasonSheets.map(s=> Number((s.game||{})[key]||0));
+    aoa.push([key, seasonTotal, ...perSheet]);
+  });
+
+  aoa.push(['Total shot', seasonSheets.reduce((a,s)=>a+Number(s.totalShot||0),0), ...seasonSheets.map(s=>Number(s.totalShot||0))]);
+  aoa.push(['Cartridges', seasonSheets.reduce((a,s)=>a+Number(s.cartridges||0),0), ...seasonSheets.map(s=>Number(s.cartridges||0))]);
+  aoa.push(['Grand total', seasonSheets.reduce((a,s)=>a+Number(s.grandTotal||0),0), ...seasonSheets.map(s=>Number(s.grandTotal||0))]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:16}, {wch:10}, ...seasonSheets.map(()=>({wch:12}))];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, seasonLabel(seasonKey).replace('/','-'));
+  XLSX.writeFile(wb, `Wing Shoot ${seasonLabel(seasonKey)}.xlsx`);
+  msg.className='msg ok'; msg.textContent='Downloaded.';
+}
+function deleteSeasonShootDays(){
+  const seasonKey = Number(document.getElementById('dangerSeasonSelect').value);
+  const toDelete = allShootDays.filter(d=>seasonKeyForDate(new Date(d.date))===seasonKey);
+  if (!toDelete.length){ document.getElementById('dangerMsg').textContent = 'No shoot dates in that season to delete.'; return; }
+  if (!confirm(`Delete all ${toDelete.length} shoot date(s) from season ${seasonLabel(seasonKey)}? This cannot be undone.`)) return;
+  Promise.all(toDelete.map(d=>db.collection('shootdays').doc(d.id).delete())).then(()=>{
+    document.getElementById('dangerMsg').className = 'msg ok';
+    document.getElementById('dangerMsg').textContent = `Deleted ${toDelete.length} shoot date(s).`;
+  }).catch(err=>{
+    document.getElementById('dangerMsg').className = 'msg err';
+    document.getElementById('dangerMsg').textContent = 'Something went wrong: ' + err.message;
+  });
+}
+function saveOrKeyFromSettings(){
+  const val = document.getElementById('orKeyInput').value;
+  saveOpenRouterKey(val);
+  document.getElementById('orKeyMsg').textContent = val.trim() ? 'Saved to this device.' : 'Cleared.';
+}
+function saveSiteTitle(){
+  const val = document.getElementById('siteTitleInput').value.trim() || 'Wing Shoot Gamebook';
+  db.collection('settings').doc('config').set({siteTitle:val},{merge:true}).then(()=>{ document.getElementById('titleMsg').textContent='Saved.'; });
+}
+function renderAdminRows(){
+  document.getElementById('adminRows').innerHTML = settingsDraftAdmins.map((email,i)=>`
+    <div class="grid2 person-row" style="grid-template-columns:1fr auto;">
+      <input type="email" value="${email}" onchange="updateAdminDraft(${i},this.value)">
+      <button class="remove-x" onclick="removeAdminRow(${i})">&times;</button>
+    </div>`).join('') || '<p class="hint">No admins yet — add one below.</p>';
+}
+function addAdminRow(){ if(settingsDraftAdmins.length<20){ settingsDraftAdmins.push(''); renderAdminRows(); } }
+function removeAdminRow(i){ settingsDraftAdmins.splice(i,1); renderAdminRows(); }
+function updateAdminDraft(i,val){ settingsDraftAdmins[i]=val.trim(); }
+function saveAdmins(){
+  const clean = settingsDraftAdmins.map(e=>e.trim()).filter(Boolean);
+  db.collection('settings').doc('config').set({adminEmails:clean},{merge:true}).then(()=>{ document.getElementById('adminMsg').textContent='Saved.'; });
+}
+function renderDriveNameRows(){
+  document.getElementById('driveNamesRows').innerHTML = settingsDraftNames.map((n,i)=>`
+    <div class="grid2 person-row" style="grid-template-columns:1fr auto;">
+      <input type="text" value="${n}" onchange="updateDriveNameDraft(${i},this.value)">
+      <button class="remove-x" onclick="removeDriveNameRow(${i})">&times;</button>
+    </div>`).join('') || '<p class="hint">No drive names yet — add one below.</p>';
+}
+function addDriveNameRow(){ if(settingsDraftNames.length<10){ settingsDraftNames.push(''); renderDriveNameRows(); } }
+function removeDriveNameRow(i){ settingsDraftNames.splice(i,1); renderDriveNameRows(); }
+function updateDriveNameDraft(i,val){ settingsDraftNames[i]=val; }
+function saveDriveNames(){
+  const clean = settingsDraftNames.map(n=>n.trim()).filter(Boolean);
+  db.collection('settings').doc('config').set({driveNames:clean},{merge:true}).then(()=>{ document.getElementById('namesMsg').textContent='Saved.'; });
+}
+function saveDrivesToggle(){
+  const on = document.getElementById('drivesToggle').checked;
+  db.collection('settings').doc('config').set({drivesEnabled:on},{merge:true}).then(()=>{ document.getElementById('toggleMsg').textContent='Saved.'; });
+}
+function savePaidToggle(){
+  const on = document.getElementById('paidToggle').checked;
+  db.collection('settings').doc('config').set({paidStatusEnabled:on},{merge:true}).then(()=>{ document.getElementById('paidToggleMsg').textContent='Saved.'; });
+}
+function saveExcelToggle(){
+  const on = document.getElementById('excelToggle').checked;
+  db.collection('settings').doc('config').set({excelUploadEnabled:on},{merge:true}).then(()=>{ document.getElementById('excelToggleMsg').textContent='Saved.'; });
+}
+function savePageAccess(){
+  const pages = ['shootdays','totals','compare','sheets'];
+  const pageAccess = {};
+  pages.forEach(key=>{
+    pageAccess[key] = {
+      guns: document.getElementById(`pageAccess_${key}_guns`).checked,
+      beaters: document.getElementById(`pageAccess_${key}_beaters`).checked
+    };
+  });
+  db.collection('settings').doc('config').set({pageAccess},{merge:true}).then(()=>{
+    document.getElementById('pageAccessMsg').textContent='Saved.';
+    buildNav();
+  });
+}
+function renderSpeciesRows(){
+  document.getElementById('speciesRows').innerHTML = settingsDraftSpecies.map((sp,i)=>`
+    <div class="grid4 person-row">
+      <input type="text" value="${sp.name}" onchange="updateSpeciesDraft(${i},'name',this.value)">
+      <select onchange="updateSpeciesDraft(${i},'legs',this.value)">
+        <option value="2" ${sp.legs===2?'selected':''}>2 legs</option>
+        <option value="4" ${sp.legs===4?'selected':''}>4 legs</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:5px;font-size:13px;margin:0;">
+        <input type="checkbox" ${sp.splitSex?'checked':''} onchange="updateSpeciesDraft(${i},'splitSex',this.checked)"> Split M/F</label>
+      <button class="remove-x" onclick="removeSpeciesRow(${i})">&times;</button>
+    </div>`).join('');
+}
+function addSpeciesRow(){ settingsDraftSpecies.push({name:'',legs:2,splitSex:false}); renderSpeciesRows(); }
+function removeSpeciesRow(i){ settingsDraftSpecies.splice(i,1); renderSpeciesRows(); }
+function updateSpeciesDraft(i,field,val){
+  if (field==='legs') val=Number(val);
+  settingsDraftSpecies[i][field]=val;
+}
+function saveSpecies(){
+  const clean = settingsDraftSpecies.filter(sp=>sp.name.trim()).map(sp=>({name:sp.name.trim(), legs:sp.legs, splitSex:!!sp.splitSex}));
+  db.collection('settings').doc('config').set({speciesList:clean},{merge:true}).then(()=>{ document.getElementById('speciesMsg').textContent='Saved.'; });
+}
+function renderFormulaRows(){
+  document.getElementById('formulaRows').innerHTML = formulaDraft.map((step,i)=>`
+    <div class="grid3 person-row" style="grid-template-columns:${i===0?'1fr auto':'80px 1fr auto'};">
+      ${i===0 ? '' : `<select onchange="updateFormulaOp(${i},this.value)">
+        ${['+','-','×','÷'].map(op=>`<option value="${op}" ${step.op===op?'selected':''}>${op}</option>`).join('')}
+      </select>`}
+      <select onchange="updateFormulaTerm(${i},this.value)">
+        ${FORMULA_TERMS.map(t=>`<option value="${t.key}" ${step.term===t.key?'selected':''}>${t.label}</option>`).join('')}
+      </select>
+      <button class="remove-x" onclick="removeFormulaTerm(${i})">&times;</button>
+    </div>`).join('');
+}
+function addFormulaTerm(){ formulaDraft.push({term:'shots', op: formulaDraft.length?'+':null}); renderFormulaRows(); }
+function removeFormulaTerm(i){ formulaDraft.splice(i,1); if(formulaDraft.length) formulaDraft[0].op=null; renderFormulaRows(); }
+function updateFormulaTerm(i,val){ formulaDraft[i].term=val; }
+function updateFormulaOp(i,val){ formulaDraft[i].op=val; }
+function saveFormula(){
+  const seasonFormulas = {...(appSettings.seasonFormulas||{})};
+  seasonFormulas[formulaSeasonKey] = JSON.parse(JSON.stringify(formulaDraft));
+  db.collection('settings').doc('config').set({seasonFormulas},{merge:true}).then(()=>{ document.getElementById('formulaMsg').textContent='Saved.'; });
+}
+
+/* ================= ADD / EDIT SHEET (admin only) ================= */
+let formGuns=[], formBeaters=[], formGuests=[], formDrives=[], formWeather=null;
+
+function renderAddForm(app){
+  const editing = editingId ? allSheets.find(x=>x.id===editingId) : null;
+  if (editingId && !editing) editingId=null;
+
+  formGuns = editing ? JSON.parse(JSON.stringify(editing.guns||[])) : [{name:'',sweep:'',havePaid:false}];
+  formBeaters = editing ? JSON.parse(JSON.stringify(editing.beaters||[])) : [{name:'',sweep:'',beenPaid:false}];
+  formGuests = editing ? JSON.parse(JSON.stringify(editing.guests||[])) : [];
+  formDrives = editing ? JSON.parse(JSON.stringify(editing.drives||[])) : [];
+  formWeather = editing ? (editing.weather||null) : null;
+  const gameVals = editing ? (editing.game||{}) : {};
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+
+  app.innerHTML = `
+    <div class="card">
+      <h2>${editing ? 'Edit sheet' : 'Add a new sheet'}</h2>
+      <p class="hint">Fill this in from the paper wing shoot sheet.</p>
+      ${authRole==='admin' ? `
+      <div class="section-title">Photo pre-fill</div>
+      <p class="hint">Upload a photo — fields below get pre-filled, check against the paper before saving.</p>
+      <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">
+      <div class="msg" id="photoMsg"></div>
+      ${appSettings.excelUploadEnabled ? `
+      <p class="hint" style="margin-top:14px;">Or, if you've already converted the sheet to a spreadsheet:</p>
+      <input type="file" accept=".xlsx,.xls" id="excelInput" onchange="handleExcelUpload(event)">
+      <div class="msg" id="excelMsg"></div>` : ''}` : ''}
+
+      <div class="section-title">When</div>
+      <div class="grid2">
+        <div class="field"><label>Date of shoot</label><input type="date" id="f_date" value="${editing ? editing.date : ''}"></div>
+        <div class="field"><label>Notes (optional)</label><input type="text" id="f_notes" value="${editing && editing.notes ? editing.notes : ''}"></div>
+      </div>
+      <div class="field" id="weatherBox"></div>
+
+      <div class="section-title">Guns</div>
+      <div id="gunsRows"></div>
+      <button class="btn ghost small" onclick="addPersonRow('guns')">+ add gun</button>
+
+      <div class="section-title">Beaters</div>
+      <div id="beatersRows"></div>
+      <button class="btn ghost small" onclick="addPersonRow('beaters')">+ add beater</button>
+
+      <div class="section-title">Game shot</div>
+      <div id="gameRows"></div>
+
+      ${appSettings.drivesEnabled ? `
+      <div class="section-title">Drives</div>
+      <div id="drivesRows"></div>
+      <button class="btn ghost small" id="addDriveBtn" onclick="addDriveRow()">+ add drive</button>` : ''}
+
+      <div class="section-title">Shoot totals</div>
+      <div class="grid2">
+        <div class="field"><label>Total shot</label><input type="number" id="f_totalShot" value="${editing ? editing.totalShot : ''}"></div>
+        <div class="field"><label>Cartridges</label><input type="number" id="f_cartridges" value="${editing ? editing.cartridges : ''}"></div>
+      </div>
+
+      <div class="card" style="background:var(--paper);">
+        <div class="headline" style="margin-bottom:6px;"><div class="num" id="liveGrandTotal" style="font-size:36px;color:var(--rust);">0</div><div class="label" style="color:var(--white);">grand total (live)</div></div>
+        <div id="liveFormulaBreakdown"></div>
+        <p class="hint" style="margin:10px 0 0;color:#a9c2b6;">Shots per kill: <b id="liveShotToKill" style="color:var(--white);">—</b></p>
+      </div>
+
+      <div style="margin-top:18px;display:flex;gap:10px;">
+        <button class="btn" onclick="saveSheet()">${editing ? 'Save changes' : 'Save sheet'}</button>
+        <button class="btn ghost" onclick="cancelForm()">Cancel</button>
+      </div>
+      <div class="msg err" id="formMsg"></div>
+    </div>
+  `;
+  renderPersonRows('guns'); renderPersonRows('beaters');
+  renderGameRows(gameVals);
+  if (appSettings.drivesEnabled) renderDriveRows();
+  renderWeatherBox();
+  ['f_totalShot','f_cartridges'].forEach(id=>document.getElementById(id).addEventListener('input', updateLiveTotal));
+  document.getElementById('f_date').addEventListener('change', e=>{ fetchWeatherFor(e.target.value); });
+  updateLiveTotal();
+}
+
+function applyDetectedDate(dateStr){
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  const dateInput = document.getElementById('f_date');
+  if (!dateInput) return false;
+  dateInput.value = dateStr;
+  fetchWeatherFor(dateStr);
+  updateLiveTotal();
+  return true;
+}
+
+function renderWeatherBox(){
+  const box = document.getElementById('weatherBox'); if(!box) return;
+  if (!formWeather){ box.innerHTML = `<label>Weather</label><p class="hint" style="margin:0;">Pick a date above to look up the weather automatically.</p>`; }
+  else { box.innerHTML = `<label>Weather</label><p style="margin:0;font-size:14px;">${formWeather.summary} · ${formWeather.tempMax}°C / ${formWeather.tempMin}°C · wind ${formWeather.windMax} mph ${formWeather.windDir||''}</p>`; }
+}
+function weatherCodeToText(code){
+  const map={0:'Clear',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',61:'Light rain',63:'Rain',65:'Heavy rain',71:'Light snow',73:'Snow',75:'Heavy snow',80:'Rain showers',81:'Rain showers',82:'Violent showers',95:'Thunderstorm'};
+  return map[code]||'Unknown';
+}
+function degreesToCompass(deg){
+  const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg/22.5)%16];
+}
+function fetchWeatherFor(dateStr){
+  if (!dateStr) return;
+  const box = document.getElementById('weatherBox');
+  box.innerHTML = `<label>Weather</label><p class="hint" style="margin:0;">Looking up…</p>`;
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${SHOOT_LAT}&longitude=${SHOOT_LON}&start_date=${dateStr}&end_date=${dateStr}&daily=temperature_2m_max,temperature_2m_min,windspeed_10m_max,winddirection_10m_dominant,weathercode&timezone=auto&windspeed_unit=mph`;
+  fetch(url).then(r=>r.json()).then(data=>{
+    if (!data.daily || !data.daily.time.length) throw new Error('no data');
+    formWeather = { tempMax:data.daily.temperature_2m_max[0], tempMin:data.daily.temperature_2m_min[0], windMax:data.daily.windspeed_10m_max[0], windDir: degreesToCompass(data.daily.winddirection_10m_dominant[0]), summary:weatherCodeToText(data.daily.weathercode[0]) };
+    renderWeatherBox();
+  }).catch(()=>{ formWeather=null; box.innerHTML = `<label>Weather</label><p class="hint" style="margin:0;">Couldn't look up weather for this date.</p>`; });
+}
+
+function handlePhotoUpload(evt){
+  const file = evt.target.files[0]; if(!file) return;
+  const msg = document.getElementById('photoMsg');
+  const orKey = getOpenRouterKey();
+  if (!orKey){
+    msg.className='msg err';
+    msg.textContent = 'No photo-reading key set up yet — go to Settings to add your free OpenRouter key.';
+    evt.target.value = '';
+    return;
+  }
+  uploadCancelRequested = false;
+  msg.className='msg';
+  msg.innerHTML = 'Reading the sheet… <button class="btn ghost small" onclick="cancelPhotoUpload(\'photoMsg\')" style="margin-left:8px;">Cancel</button>';
+  const speciesNames = (appSettings.speciesList||DEFAULT_SPECIES).map(s=>s.name);
+
+  compressImage(file, 1600, 0.82).then(base64 => {
+    if (uploadCancelRequested) return;
+    const prompt = `You are reading a handwritten "wing shoot" sheet. It usually has a date printed near the top (e.g. "WING SHOOT 10.01.26" meaning 10 January 2026). It has two people tables: "GUNS" and "BEATERS" (name, sweep number). It has a "GAME SHOT NO" table listing species and counts, from this list: ${speciesNames.join(', ')}. It shows TOTAL SHOT and CARTRIDGES figures. Return ONLY valid JSON, no markdown:
+{"date":"YYYY-MM-DD","guns":[{"name":"","sweep":0}],"beaters":[{"name":"","sweep":0}],"game":{"Pheasant":0},"totalShot":0,"cartridges":0}
+If no date is visible or you're not confident of it, omit the "date" field entirely rather than guessing. Only include species with a number written next to them. Omit illegible fields rather than guessing. Respond with the JSON object only — no other text, notes, or explanation before or after it.`;
+    const controller = new AbortController();
+    activeUploadController = controller;
+    fetchWithTimeout(`https://openrouter.ai/api/v1/chat/completions`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
+      body: JSON.stringify({
+        model: 'openrouter/free', // auto-picks a free vision-capable model
+        messages: [{
+          role: 'user',
+          content: [
+            {type:'text', text: prompt},
+            {type:'image_url', image_url:{url: `data:image/jpeg;base64,${base64}`}}
+          ]
+        }]
+      })
+    }, 45000, controller).then(r=>r.json()).then(data=>{
+      if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
+      if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
+      const text = data.choices[0].message.content;
+      const parsed = extractJson(text);
+      const dateApplied = applyDetectedDate(parsed.date);
+      if ((parsed.guns||[]).length) formGuns = parsed.guns;
+      if ((parsed.beaters||[]).length) formBeaters = parsed.beaters;
+      renderPersonRows('guns'); renderPersonRows('beaters');
+      renderGameRows(parsed.game||{});
+      if (parsed.totalShot) document.getElementById('f_totalShot').value = parsed.totalShot;
+      if (parsed.cartridges) document.getElementById('f_cartridges').value = parsed.cartridges;
+      updateLiveTotal();
+      msg.className='msg ok'; msg.textContent = 'Pre-filled' + (dateApplied ? ' (including the date)' : '') + ' — check every field against the paper sheet before saving.';
+    }).catch(err=>{
+      if (uploadCancelRequested) return;
+      const isTimeout = err.name === 'AbortError';
+      msg.className='msg err';
+      msg.textContent = isTimeout ? "The photo-reading service didn't respond in time (45s) — the free model may be overloaded right now. Try again in a minute, or fill this in by hand." : "Couldn't read that photo: " + err.message;
+    });
+  }).catch(err=>{
+    if (uploadCancelRequested) return;
+    msg.className='msg err'; msg.textContent="Couldn't process that photo: " + err.message;
+  });
+}
+
+function handleExcelUpload(evt){
+  const file = evt.target.files[0]; if(!file) return;
+  const msg = document.getElementById('excelMsg');
+  const orKey = getOpenRouterKey();
+  if (!orKey){
+    msg.className='msg err';
+    msg.textContent = 'No reading key set up yet — go to Settings to add your free OpenRouter key.';
+    evt.target.value = '';
+    return;
+  }
+  if (typeof XLSX === 'undefined'){
+    msg.className='msg err';
+    msg.textContent = 'Excel library failed to load — check your internet connection and try again.';
+    return;
+  }
+  uploadCancelRequested = false;
+  msg.className='msg';
+  msg.innerHTML = 'Reading the spreadsheet… <button class="btn ghost small" onclick="cancelPhotoUpload(\'excelMsg\')" style="margin-left:8px;">Cancel</button>';
+  const speciesNames = (appSettings.speciesList||DEFAULT_SPECIES).map(s=>s.name);
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    if (uploadCancelRequested) return;
+    let csvText;
+    try {
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const sheetName = wb.SheetNames[0];
+      csvText = XLSX.utils.sheet_to_csv(wb.Sheets[sheetName]);
+    } catch (err){
+      msg.className='msg err'; msg.textContent = "Couldn't read that spreadsheet: " + err.message;
+      return;
+    }
+    const prompt = `Here is the raw content of a spreadsheet (as CSV) recording a "wing shoot" sheet. It may include a date for the shoot (e.g. "10.01.26" meaning 10 January 2026), and should contain two people tables: "GUNS" and "BEATERS" (name, sweep number), a game/species table listing counts for species from this list: ${speciesNames.join(', ')}, and TOTAL SHOT and CARTRIDGES figures — wherever they appear in the data below. Return ONLY valid JSON, no markdown, in exactly this shape:
+{"date":"YYYY-MM-DD","guns":[{"name":"","sweep":0}],"beaters":[{"name":"","sweep":0}],"game":{"Pheasant":0},"totalShot":0,"cartridges":0}
+If no date is present or you're not confident of it, omit the "date" field entirely rather than guessing. Only include species with a number given. Omit anything unclear rather than guessing. Respond with the JSON object only — no other text before or after it.
+
+SPREADSHEET CONTENT:
+${csvText}`;
+    const controller = new AbortController();
+    activeUploadController = controller;
+    fetchWithTimeout(`https://openrouter.ai/api/v1/chat/completions`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${orKey}`},
+      body: JSON.stringify({
+        model: 'openrouter/free',
+        messages: [{ role: 'user', content: prompt }]
+      })
+    }, 45000, controller).then(r=>r.json()).then(data=>{
+      if (data.error){ throw new Error(`API error: ${data.error.message||JSON.stringify(data.error)}`); }
+      if (!data.choices || !data.choices.length){ throw new Error('No response returned'); }
+      const text = data.choices[0].message.content;
+      const parsed = extractJson(text);
+      const dateApplied = applyDetectedDate(parsed.date);
+      if ((parsed.guns||[]).length) formGuns = parsed.guns;
+      if ((parsed.beaters||[]).length) formBeaters = parsed.beaters;
+      renderPersonRows('guns'); renderPersonRows('beaters');
+      renderGameRows(parsed.game||{});
+      if (parsed.totalShot) document.getElementById('f_totalShot').value = parsed.totalShot;
+      if (parsed.cartridges) document.getElementById('f_cartridges').value = parsed.cartridges;
+      updateLiveTotal();
+      msg.className='msg ok'; msg.textContent = 'Pre-filled' + (dateApplied ? ' (including the date)' : '') + ' — check every field against the spreadsheet before saving.';
+    }).catch(err=>{
+      if (uploadCancelRequested) return;
+      const isTimeout = err.name === 'AbortError';
+      msg.className='msg err';
+      msg.textContent = isTimeout ? "The reading service didn't respond in time (45s) — the free model may be overloaded right now. Try again in a minute, or fill this in by hand." : "Couldn't read that spreadsheet: " + err.message;
+    });
+  };
+  reader.onerror = () => { msg.className='msg err'; msg.textContent = "Couldn't read that file."; };
+  reader.readAsArrayBuffer(file);
+}
+
+let activeUploadController = null;
+let uploadCancelRequested = false;
+function fetchWithTimeout(url, options, timeoutMs, controller){
+  controller = controller || new AbortController();
+  const timer = setTimeout(()=> controller.abort(), timeoutMs);
+  return fetch(url, {...options, signal: controller.signal})
+    .finally(()=> clearTimeout(timer));
+}
+function cancelPhotoUpload(msgElId){
+  uploadCancelRequested = true;
+  if (activeUploadController) activeUploadController.abort();
+  const msg = document.getElementById(msgElId);
+  if (msg){ msg.className='msg err'; msg.textContent='Cancelled.'; }
+}
+function extractJson(text){
+  // Free AI models sometimes wrap the JSON in extra commentary or markdown —
+  // pull out just the {...} block regardless of what surrounds it.
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start){
+    throw new Error('No JSON object found in the response');
+  }
+  return JSON.parse(text.slice(start, end+1));
+}
+function compressImage(file, maxDim, quality, timeoutMs){
+  timeoutMs = timeoutMs || 15000;
+  const work = new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = () => {
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim){
+          if (w > h){ h = Math.round(h * maxDim / w); w = maxDim; }
+          else { w = Math.round(w * maxDim / h); h = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl.split(',')[1]);
+      };
+      img.onerror = () => reject(new Error('Could not load image'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+  const timeout = new Promise((_, reject) => setTimeout(()=> reject(new Error('Image processing timed out')), timeoutMs));
+  return Promise.race([work, timeout]);
+}
+
+function renderPersonRows(kind){
+  const container = document.getElementById(kind+'Rows');
+  const arr = kind==='guns'?formGuns:kind==='beaters'?formBeaters:formGuests;
+  const paidLabel = (!appSettings.paidStatusEnabled) ? null : (kind==='guns' ? 'Have paid' : kind==='beaters' ? 'Been paid' : null);
+  const paidField = kind==='guns' ? 'havePaid' : kind==='beaters' ? 'beenPaid' : null;
+  container.innerHTML = arr.map((p,i)=>`
+    <div class="grid3 person-row" style="grid-template-columns:${paidLabel?'2fr 1fr 1fr auto':'2fr 1fr auto'};">
+      <div><input type="text" placeholder="Name" value="${p.name||''}" onchange="updatePerson('${kind}',${i},'name',this.value)"></div>
+      <div><input type="number" placeholder="Sweep" value="${p.sweep||''}" onchange="updatePerson('${kind}',${i},'sweep',this.value)"></div>
+      ${paidLabel ? `<label style="display:flex;align-items:center;gap:5px;font-size:12.5px;margin:0;">
+        <input type="checkbox" ${p[paidField]?'checked':''} onchange="updatePersonBool('${kind}',${i},'${paidField}',this.checked)"> ${paidLabel}</label>` : ''}
+      <button class="remove-x" onclick="removePersonRow('${kind}',${i})">&times;</button>
+    </div>`).join('');
+}
+function addPersonRow(kind){
+  const arr = kind==='guns'?formGuns:kind==='beaters'?formBeaters:formGuests;
+  arr.push(kind==='guns'?{name:'',sweep:'',havePaid:false}:kind==='beaters'?{name:'',sweep:'',beenPaid:false}:{name:'',sweep:''});
+  renderPersonRows(kind);
+}
+function removePersonRow(kind,i){ const arr=kind==='guns'?formGuns:kind==='beaters'?formBeaters:formGuests; arr.splice(i,1); renderPersonRows(kind); }
+function updatePerson(kind,i,field,val){ const arr=kind==='guns'?formGuns:kind==='beaters'?formBeaters:formGuests; arr[i][field]=val; }
+function updatePersonBool(kind,i,field,val){ const arr=kind==='guns'?formGuns:formBeaters; arr[i][field]=val; }
+
+function renderGameRows(vals){
+  const container = document.getElementById('gameRows');
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  container.innerHTML = `<div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">` + speciesList.map(sp=>{
+    if (sp.splitSex){
+      return `<div class="field" style="margin-bottom:0;"><label>${sp.name}</label>
+        <div style="display:flex;gap:6px;">
+          <input type="number" placeholder="M" data-species="${sp.name} (M)" value="${vals[sp.name+' (M)']||''}" class="gameInput" oninput="updateLiveTotal()">
+          <input type="number" placeholder="F" data-species="${sp.name} (F)" value="${vals[sp.name+' (F)']||''}" class="gameInput" oninput="updateLiveTotal()">
+        </div></div>`;
+    }
+    return `<div class="field" style="margin-bottom:0;"><label>${sp.name}</label>
+      <input type="number" data-species="${sp.name}" value="${vals[sp.name]||''}" class="gameInput" oninput="updateLiveTotal()"></div>`;
+  }).join('') + `</div>`;
+}
+function collectGame(){
+  const out = {};
+  document.querySelectorAll('.gameInput').forEach(inp=>{ const v=Number(inp.value||0); if(v) out[inp.dataset.species]=v; });
+  if (appSettings.drivesEnabled){
+    formDrives.forEach(d=>{ if(d.species && Number(d.shots)) out[d.species]=(out[d.species]||0)+Number(d.shots); });
+  }
+  return out;
+}
+function renderDriveRows(){
+  const container = document.getElementById('drivesRows'); if(!container) return;
+  const names = appSettings.driveNames||[];
+  const speciesList = appSettings.speciesList || DEFAULT_SPECIES;
+  container.innerHTML = formDrives.map((d,i)=>`
+    <div class="grid3 person-row">
+      <div><select onchange="updateDrive(${i},'name',this.value)"><option value="">Select drive…</option>
+        ${names.map(n=>`<option value="${n}" ${d.name===n?'selected':''}>${n}</option>`).join('')}</select></div>
+      <div><select onchange="updateDrive(${i},'species',this.value)"><option value="">Species…</option>
+        ${speciesList.map(sp=>`<option value="${sp.name}" ${d.species===sp.name?'selected':''}>${sp.name}</option>`).join('')}</select></div>
+      <div><input type="number" placeholder="Shots" value="${d.shots||''}" onchange="updateDrive(${i},'shots',this.value)"></div>
+      <button class="remove-x" onclick="removeDriveRow(${i})">&times;</button>
+    </div>`).join('') || '<p class="hint">No drives added yet.</p>';
+  const addBtn = document.getElementById('addDriveBtn'); if(addBtn) addBtn.disabled = formDrives.length>=10;
+}
+function addDriveRow(){ if(formDrives.length<10){ formDrives.push({name:'',species:'',shots:''}); renderDriveRows(); } }
+function removeDriveRow(i){ formDrives.splice(i,1); renderDriveRows(); updateLiveTotal(); }
+function updateDrive(i,field,val){ formDrives[i][field]=val; if(field==='shots') updateLiveTotal(); }
+
+function updateLiveTotal(){
+  const totalShot = Number(document.getElementById('f_totalShot').value||0);
+  const cartridges = Number(document.getElementById('f_cartridges').value||0);
+  const game = collectGame();
+  const seasonKey = seasonKeyForDate(new Date(document.getElementById('f_date').value || Date.now()));
+  const formula = getSeasonFormula(seasonKey);
+  const facts = computeSheetFacts({guns:formGuns, beaters:formBeaters, guests:formGuests, game, cartridges});
+  const grand = evalFormula(formula, facts);
+  document.getElementById('liveGrandTotal').textContent = grand.toLocaleString();
+  document.getElementById('liveFormulaBreakdown').innerHTML = formulaBreakdownHTML(formula, facts, grand);
+  document.getElementById('liveShotToKill').textContent = shotToKillRatio(cartridges, totalShot);
+}
+
+function cancelForm(){ const wasEditing=editingId; editingId=null; switchTab(wasEditing?'sheet-detail':'sheets'); if(wasEditing){editingId=wasEditing; currentTab='sheet-detail'; render();} }
+
+function saveSheet(){
+  const date = document.getElementById('f_date').value;
+  if (!date){ document.getElementById('formMsg').textContent='Please pick a date.'; return; }
+  const totalShot = Number(document.getElementById('f_totalShot').value||0);
+  const cartridges = Number(document.getElementById('f_cartridges').value||0);
+  const game = collectGame();
+  const cleanPeople = (arr, extra) => arr.filter(p=>p.name&&p.name.trim()).map(p=>{
+    const o = {name:p.name.trim(), sweep:Number(p.sweep||0)};
+    if (extra) o[extra] = !!p[extra];
+    return o;
+  });
+  const cleanDrives = (formDrives||[]).filter(d=>d.name&&d.species).map(d=>({name:d.name, species:d.species, shots:Number(d.shots||0)}));
+  const seasonKey = seasonKeyForDate(new Date(date));
+  const formula = getSeasonFormula(seasonKey);
+  const guns = cleanPeople(formGuns,'havePaid'), beaters=cleanPeople(formBeaters,'beenPaid'), guests=cleanPeople(formGuests,null);
+  const facts = computeSheetFacts({guns,beaters,guests,game,cartridges});
+  const grandTotal = evalFormula(formula, facts);
+
+  const payload = {
+    date, notes: document.getElementById('f_notes').value.trim(),
+    guns, beaters, guests, game, totalShot, cartridges, grandTotal,
+    drives: cleanDrives, weather: formWeather||null,
+    formulaUsed: formula, factsUsed: facts
+  };
+  const ref = editingId ? db.collection('sheets').doc(editingId) : db.collection('sheets').doc();
+  ref.set(payload).then(()=>{ editingId=ref.id; currentTab='sheet-detail'; render(); })
+     .catch(e=>{ document.getElementById('formMsg').textContent=e.message; });
+}
+</script>
+</body>
+</html>
