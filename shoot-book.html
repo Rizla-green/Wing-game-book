@@ -200,7 +200,7 @@ button.btn:disabled{ opacity:0.45; cursor:not-allowed; }
   <div class="titlebar">
     <div>
       <h1 id="siteTitle">Wing Shoot Gamebook</h1>
-      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v23</div>
+      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v24</div>
     </div>
     <div class="admin-bar"><span id="authStatus">checking…</span></div>
   </div>
@@ -220,11 +220,9 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-db.enablePersistence({ synchronizeTabs: true }).catch(err=>{
-  // Common, harmless reasons this can fail: multiple tabs open (rare on a phone),
-  // or an old/unsupported browser. The app still works, just without offline queuing.
-  console.warn('Offline persistence not enabled:', err.code);
-});
+// Offline persistence (IndexedDB-backed local cache) was removed — it's known to misbehave
+// inside iOS "Add to Home Screen" apps, sometimes silently serving stale/empty data instead
+// of fetching fresh from the server. The app always talks to Firestore live now.
 const auth = firebase.auth();
 
 const DEFAULT_SPECIES = [
