@@ -200,7 +200,7 @@ button.btn:disabled{ opacity:0.45; cursor:not-allowed; }
   <div class="titlebar">
     <div>
       <h1 id="siteTitle">Wing Shoot Gamebook</h1>
-      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v24</div>
+      <div class="sub">Wing shoot record — season 1 Sep to 2 Feb · build v25</div>
     </div>
     <div class="admin-bar"><span id="authStatus">checking…</span></div>
   </div>
@@ -308,6 +308,7 @@ function computeAuthRole(){
 }
 auth.onAuthStateChanged(user=>{
   lastAuthUser = user;
+  subscribeUserScopedData(); // re-attach settings/users listeners fresh for this signed-in state
   computeAuthRole();
 });
 function renderAuthBar(){
@@ -363,21 +364,35 @@ db.collection('shootdays').orderBy('date','asc').onSnapshot(snap=>{
   shootDaysLoaded = true; render();
 }, ()=>{ shootDaysLoaded = true; render(); });
 
-db.collection('settings').doc('config').onSnapshot(doc=>{
-  if (doc.exists) appSettings = { drivesEnabled:false, driveNames:[], speciesList:DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", paidStatusEnabled:true, excelUploadEnabled:true, pageAccess: {shootdays:{guns:true,beaters:true,normal:true}, totals:{guns:true,beaters:true,normal:true}, compare:{guns:true,beaters:true,normal:true}, sheets:{guns:true,beaters:true,normal:true}}, ...doc.data() };
-  document.getElementById('siteTitle').textContent = appSettings.siteTitle || "Wing Shoot Gamebook";
-  settingsLoaded = true;
-  computeAuthRole(); // the admin list may have just changed, so re-check role
-  render();
-}, ()=>{ settingsLoaded = true; render(); });
+let unsubSettings = null, unsubUsers = null;
+function subscribeUserScopedData(){
+  // Re-establishing these listeners on every auth change (rather than once at page load)
+  // guards against the connection getting wedged before sign-in finishes — seen on some
+  // iOS "Add to Home Screen" installs, where the very first attempt can start before the
+  // auth token is ready and never recovers on its own.
+  if (unsubSettings){ unsubSettings(); unsubSettings = null; }
+  if (unsubUsers){ unsubUsers(); unsubUsers = null; }
+  settingsLoaded = false;
+  usersLoaded = false;
 
-db.collection('users').onSnapshot(snap=>{
-  allUsers = snap.docs.map(d=>({uid:d.id, ...d.data()}));
-  usersLoaded = true;
-  computeAuthRole(); // someone's role may have just changed
-  if (currentTab==='settings') renderUserRows();
-  render();
-}, ()=>{ usersLoaded = true; render(); });
+  unsubSettings = db.collection('settings').doc('config').onSnapshot(doc=>{
+    if (doc.exists) appSettings = { drivesEnabled:false, driveNames:[], speciesList:DEFAULT_SPECIES, adminEmails:[], seasonFormulas:{}, siteTitle:"Wing Shoot Gamebook", paidStatusEnabled:true, excelUploadEnabled:true, pageAccess: {shootdays:{guns:true,beaters:true,normal:true}, totals:{guns:true,beaters:true,normal:true}, compare:{guns:true,beaters:true,normal:true}, sheets:{guns:true,beaters:true,normal:true}}, ...doc.data() };
+    document.getElementById('siteTitle').textContent = appSettings.siteTitle || "Wing Shoot Gamebook";
+    settingsLoaded = true;
+    computeAuthRole(); // the admin list may have just changed, so re-check role
+    render();
+  }, ()=>{ settingsLoaded = true; render(); });
+
+  unsubUsers = db.collection('users').onSnapshot(snap=>{
+    allUsers = snap.docs.map(d=>({uid:d.id, ...d.data()}));
+    usersLoaded = true;
+    computeAuthRole(); // someone's role may have just changed
+    if (currentTab==='settings') renderUserRows();
+    render();
+  }, ()=>{ usersLoaded = true; render(); });
+}
+// Not called here — auth.onAuthStateChanged always fires once on load (even signed-out),
+// so that's the single place these listeners get attached, keeping it in step with auth.
 
 /* ---------------- render router ---------------- */
 let selectedSeason = null;
